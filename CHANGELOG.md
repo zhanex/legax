@@ -6,6 +6,12 @@ All notable project changes should be recorded here. The format follows a simple
 
 ## Unreleased
 
+## 0.0.3
+
+- Added user-facing deployment manuals and an AI-oriented install guide linked from the README.
+- Prevented daemon restart storms when adapters repeatedly fail during startup.
+- Hardened the npm publish workflow with a bounded CI gate and matching relay test environment.
+
 ## 0.0.2
 
 - Prepared the GitHub repository for public release, including documentation layout cleanup and npm Trusted Publishing workflow support.

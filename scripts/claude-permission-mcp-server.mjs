@@ -17,7 +17,7 @@ import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/p
 
 const SERVER_INFO = {
   name: "legax-claude-permissions",
-  version: "0.0.2"
+  version: "0.0.3"
 };
 
 const TOOLS = [

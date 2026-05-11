@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+## 0.0.3
+
+- 增加面向用户的部署手册，以及从 README 链接的 AI 安装配置文档。
+- 避免适配器启动反复失败时 daemon 进入重启风暴。
+- 为 npm 发布 workflow 增加有界 CI 门禁，并与常规 CI 使用一致的 relay 测试环境。
+
 ## 0.0.2
 
 - 整理 GitHub 仓库用于公开发布，包括文档目录布局清理和 npm Trusted Publishing workflow 支持。

@@ -25,7 +25,7 @@ This repository is source-first. Public releases should be cut only after the re
 6. Create a signed or annotated tag when practical:
 
    ```bash
-   git tag -a v0.0.2 -m "v0.0.2"
+   git tag -a vX.Y.Z -m "vX.Y.Z"
    ```
 
 7. Publish release notes from the changelog and call out any security-relevant migration steps.

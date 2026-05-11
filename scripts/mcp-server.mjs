@@ -9,7 +9,7 @@ import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/p
 
 const SERVER_INFO = {
   name: "legax",
-  version: "0.0.2"
+  version: "0.0.3"
 };
 
 const DEFAULT_CONFIG = {

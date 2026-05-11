@@ -35,7 +35,7 @@ import {
 import { packageAssetPath, resolveConfigPath, resolveConfigRelative, resolveRuntimeFile } from "./lib/paths.mjs";
 
 
-const VERSION = "0.0.2";
+const VERSION = "0.0.3";
 let activeConfigPath = resolveConfigPath();
 
 
