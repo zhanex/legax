@@ -47,7 +47,7 @@ legax daemon start
 
 Legax 以三个 fixed-version packages 发布：`legax`、`@legax/daemon`、`@legax/relay` 始终使用同一个版本号。分离部署时，在公网服务器安装 `@legax/relay`，在开发机安装 `legax` 或 `@legax/daemon`：
 
-如果需要按步骤部署，请阅读[用户操作手册](docs/USER_MANUAL.zh-CN.md)。
+如果需要按步骤部署，请阅读[用户操作手册](docs/USER_MANUAL.zh-CN.md)。如果由 AI 助手帮你安装和配置 Legax，请把[AI 安装配置指南](docs/AI_INSTALL.zh-CN.md)交给它执行。
 
 ```bash
 # relay 服务器
@@ -87,7 +87,7 @@ legax daemon start
 - `self-hosted-relay/`——独立 Linux Relay 安装器和服务文件。
 - `skills/legax/`——给宿主 Agent 暴露的 MCP 技能文档。
 - `tests/e2e/`——relay、Adapter、运行时状态的端到端测试。
-- `docs/`——用户操作手册、架构说明、功能边界、协议、发布流程、路线图、文档规范、隐私说明、使用条款。
+- `docs/`——用户操作手册、AI 安装配置指南、架构说明、功能边界、协议、发布流程、路线图、文档规范、隐私说明、使用条款。
 - `.github/`——CI 工作流、贡献指南、安全策略、支持说明、行为准则。
 
 ## 配置
