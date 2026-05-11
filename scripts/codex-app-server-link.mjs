@@ -598,6 +598,7 @@ class AppServerRpc {
       cwd: resolveFromCwd(settings.cwd ?? "."),
       env: process.env,
       shell: process.platform === "win32",
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.child.stdout.setEncoding("utf8");
@@ -629,6 +630,7 @@ class AppServerRpc {
           cwd: resolveFromCwd(settings.cwd ?? "."),
           env: process.env,
           shell: process.platform === "win32",
+          windowsHide: true,
           stdio: ["ignore", "ignore", "pipe"]
         });
         // Buffer the first chunks of stderr so a fast-fail (port collision,

@@ -52,6 +52,8 @@ daemon:
   restart: true
   restartBackoffMs: 1000
   restartBackoffMaxMs: 30000
+  restartMaxAttempts: 5       # rapid failures before an adapter restart circuit opens
+  restartHealthyAfterMs: 60000 # reset the restart circuit after this much uptime
   remoteRouter: true          # daemon owns relay/Telegram inbound routing; adapters only consume their inbox
   remotePollIntervalMs: 1000
   projectRoots:               # local folders the Telegram Mini App project picker may browse

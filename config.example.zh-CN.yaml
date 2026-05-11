@@ -52,6 +52,8 @@ daemon:
   restart: true
   restartBackoffMs: 1000
   restartBackoffMaxMs: 30000
+  restartMaxAttempts: 5       # adapter 快速失败达到该次数后打开重启熔断
+  restartHealthyAfterMs: 60000 # 运行达到该时长后重置重启熔断
   remoteRouter: true
   remotePollIntervalMs: 1000
   projectRoots:               # Telegram Mini App 项目选择器可浏览的本机目录

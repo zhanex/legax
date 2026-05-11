@@ -653,6 +653,7 @@ class ClaudeCodeLink {
       cwd: resolveFromCwd(settings.cwd ?? "."),
       env: process.env,
       shell: process.platform === "win32",
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.child = child;

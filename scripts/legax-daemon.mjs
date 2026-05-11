@@ -54,6 +54,8 @@ function loadConfig() {
       restart: true,
       restartBackoffMs: 1000,
       restartBackoffMaxMs: 30000,
+      restartMaxAttempts: 5,
+      restartHealthyAfterMs: 60000,
       launchOnDemand: true,
       launchPollIntervalMs: 500,
       remoteRouter: true,
@@ -790,18 +792,131 @@ function killProcessTree(child) {
   }
 }
 
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+const WINDOWS_CONTROL_EXIT_CODE = 0xC000013A;
+
+function nonNegativeNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function nonNegativeInteger(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+function parseLockPid(raw) {
+  try {
+    const body = JSON.parse(String(raw ?? ""));
+    const pid = Number(body.pid);
+    return Number.isInteger(pid) ? pid : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function daemonLockStaleMs(config) {
+  return nonNegativeNumber(config.daemon?.singletonLockStaleMs, 30000);
+}
+
+function acquireDaemonLock(config) {
+  if (config.daemon?.singletonLock === false) {
+    return { release() {} };
+  }
+  const lockPath = `${config.runtimeStatePath}.daemon.lock`;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const body = JSON.stringify({
+    pid: process.pid,
+    configPath: config.configPath,
+    runtimeStatePath: config.runtimeStatePath,
+    startedAt: new Date().toISOString()
+  });
+  let fd = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fd = fs.openSync(lockPath, "wx");
+      fs.writeSync(fd, body);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      let raw = "";
+      let stat = null;
+      try {
+        raw = fs.readFileSync(lockPath, "utf8");
+        stat = fs.statSync(lockPath);
+      } catch (readError) {
+        if (readError.code !== "ENOENT") throw readError;
+      }
+      const pid = parseLockPid(raw);
+      if (isProcessAlive(pid)) {
+        throw new Error(`daemon already running for runtime state ${config.runtimeStatePath} (pid ${pid}). Stop that daemon before starting another one.`);
+      }
+      if (!pid && stat && Date.now() - stat.mtimeMs < daemonLockStaleMs(config)) {
+        throw new Error(`daemon lock exists at ${lockPath} but does not contain a readable pid yet. Retry after the current start attempt finishes.`);
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+    }
+  }
+
+  if (fd === null) {
+    throw new Error(`could not acquire daemon lock at ${lockPath}`);
+  }
+
+  let released = false;
+  return {
+    release() {
+      if (released) return;
+      released = true;
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+      try {
+        if (fs.existsSync(lockPath) && fs.readFileSync(lockPath, "utf8") === body) {
+          fs.unlinkSync(lockPath);
+        }
+      } catch {
+        // Best-effort cleanup; stale locks are recovered on the next start.
+      }
+    }
+  };
+}
+
 class AdapterSupervisor {
   constructor(config, adapter) {
     this.config = config;
     this.adapter = adapter;
     this.stopping = false;
-    this.restartDelay = Number(config.daemon?.restartBackoffMs ?? 1000);
-    this.restartMax = Number(config.daemon?.restartBackoffMaxMs ?? 30000);
+    this.restartInitial = nonNegativeNumber(config.daemon?.restartBackoffMs, 1000);
+    this.restartMax = Math.max(this.restartInitial, nonNegativeNumber(config.daemon?.restartBackoffMaxMs, 30000));
+    this.restartMaxAttempts = nonNegativeInteger(config.daemon?.restartMaxAttempts, 5);
+    this.restartHealthyAfterMs = nonNegativeNumber(config.daemon?.restartHealthyAfterMs, 60000);
+    this.restartDelay = this.restartInitial;
+    this.restartAttempts = 0;
+    this.restartTimer = null;
+    this.lastStartAt = 0;
   }
 
-  start() {
+  resetRestartState() {
+    this.restartDelay = this.restartInitial;
+    this.restartAttempts = 0;
+  }
+
+  start({ resetRestartState = false } = {}) {
     this.stopping = false;
-    this.restartDelay = Number(this.config.daemon?.restartBackoffMs ?? 1000);
+    if (resetRestartState) this.resetRestartState();
+    this.lastStartAt = Date.now();
     process.stderr.write(`[legax] starting ${this.adapter.name}\n`);
     this.child = spawn(process.execPath, [this.adapter.scriptPath], {
       cwd: packageRoot,
@@ -813,7 +928,8 @@ class AdapterSupervisor {
           LEGAX_DAEMON_ROUTER: "1"
         })
       },
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     prefixStream(this.child.stdout, this.adapter.name, process.stdout);
     prefixStream(this.child.stderr, this.adapter.name, process.stderr);
@@ -829,20 +945,40 @@ class AdapterSupervisor {
     if (this.stopping) return;
     process.stderr.write(`[legax] ${this.adapter.name} exited (${code ?? signal})\n`);
     if (this.config.daemon?.restart === false) return;
+    if (Number(code) === WINDOWS_CONTROL_EXIT_CODE) {
+      process.stderr.write(`[legax] restart suppressed for ${this.adapter.name}: Windows control-event exit (${code})\n`);
+      return;
+    }
+    const runtimeMs = this.lastStartAt ? Date.now() - this.lastStartAt : 0;
+    if (runtimeMs >= this.restartHealthyAfterMs) {
+      this.resetRestartState();
+    }
+    if (this.restartAttempts >= this.restartMaxAttempts) {
+      process.stderr.write(`[legax] restart disabled for ${this.adapter.name} after ${this.restartMaxAttempts} rapid failures; last runtime ${runtimeMs}ms\n`);
+      return;
+    }
     const delay = this.restartDelay;
-    this.restartDelay = Math.min(this.restartMax, Math.max(1000, this.restartDelay * 2));
-    setTimeout(() => {
+    this.restartAttempts += 1;
+    this.restartDelay = Math.min(this.restartMax, this.restartDelay * 2);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
       if (!this.stopping) this.start();
     }, delay);
   }
 
   stop() {
     this.stopping = true;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     killProcessTree(this.child);
   }
 
   isRunning() {
     return Boolean(this.child && this.child.exitCode === null && !this.child.killed && !this.stopping);
+  }
+
+  isRestartPending() {
+    return Boolean(this.restartTimer && !this.stopping);
   }
 }
 
@@ -864,7 +1000,7 @@ class AdapterManager {
 
   async startAdapter(adapter, { announce = true, request = null, reason = "on-demand" } = {}) {
     let supervisor = this.supervisorsByAgentId.get(adapter.agentId);
-    if (supervisor?.isRunning()) return false;
+    if (supervisor?.isRunning() || supervisor?.isRestartPending()) return false;
 
     try {
       const mcp = ensureAdapterMcpConfigured(this.config, adapter);
@@ -881,7 +1017,7 @@ class AdapterManager {
         supervisor = new AdapterSupervisor(this.config, adapter);
         this.supervisorsByAgentId.set(adapter.agentId, supervisor);
       }
-      supervisor.start();
+      supervisor.start({ resetRestartState: true });
       return true;
     } catch (error) {
       process.stderr.write(`[legax] failed to start ${adapter.name}: ${error.message}\n`);
@@ -939,6 +1075,9 @@ async function main() {
     return;
   }
 
+  const daemonLock = acquireDaemonLock(config);
+  process.on("exit", () => daemonLock.release());
+
   const transports = summarizeTransports(config);
   if (transports.length === 0) {
     process.stderr.write("[legax] no transports configured in YAML.\n");
@@ -959,6 +1098,7 @@ async function main() {
   const adapters = enabledAdapters(config);
   if (adapters.length === 0) {
     process.stderr.write("[legax] no enabled adapters in config.\n");
+    daemonLock.release();
     return;
   }
   config.agents = configuredAgentCatalog(adapters);
@@ -972,6 +1112,7 @@ async function main() {
   const shutdown = () => {
     router.stop();
     manager.stop();
+    daemonLock.release();
   };
   process.on("SIGINT", () => {
     shutdown();

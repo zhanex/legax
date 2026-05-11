@@ -4,7 +4,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { closeHttpServer, dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, spawnNodeForTest, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { closeHttpServer, dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, sleep, spawnNodeForTest, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
 
 test("daemon starts enabled Codex, Claude, and Gemini adapters from one YAML config", async (t) => {
   const relay = await startRelay(t, { sessionId: "daemon-e2e" });
@@ -108,6 +108,119 @@ test("daemon dry-run reports enabled adapters without starting clients", async (
   assert.deepEqual(body.adapters.map((adapter) => adapter.cliBackend).sort(), ["app-server", "server-http", "stream-json", "stream-json"]);
   assert.ok(body.adapters.filter((adapter) => adapter.name !== "opencode").every((adapter) => adapter.mcpEnabled === true));
   assert.equal(body.adapters.find((adapter) => adapter.name === "opencode").autoStart, false);
+});
+
+test("daemon stops restarting an adapter after repeated rapid startup failures", async (t) => {
+  const relay = await startRelay(t, { sessionId: "daemon-restart-circuit-e2e" });
+  const fakeClaude = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-claude-code.mjs").replaceAll("\\", "/");
+  const nodePath = process.execPath.replaceAll("\\", "/");
+  const stamp = `${process.pid}-${Date.now()}`;
+  const configPath = path.join(dataDir, `daemon-restart-circuit-config-${stamp}.yaml`).replaceAll("\\", "/");
+  const statePath = path.join(dataDir, `daemon-restart-circuit-state-${stamp}.json`).replaceAll("\\", "/");
+  const runtimeStatePath = path.join(dataDir, `daemon-restart-circuit-runtime-${stamp}.json`).replaceAll("\\", "/");
+  const mcpConfigPath = path.join(dataDir, `daemon-restart-circuit-claude-mcp-${stamp}.json`).replaceAll("\\", "/");
+  await fs.writeFile(configPath, `
+sessionId: ${relay.sessionId}
+displayName: Restart Circuit E2E
+storagePath: ${statePath}
+runtimeStatePath: ${runtimeStatePath}
+daemon:
+  restart: true
+  restartBackoffMs: 20
+  restartBackoffMaxMs: 60
+  restartMaxAttempts: 3
+  restartHealthyAfterMs: 5000
+  launchOnDemand: false
+  remotePollIntervalMs: 100
+codex:
+  enabled: false
+claude:
+  enabled: true
+  autoStart: true
+  command: ${nodePath}
+  args:
+    - ${fakeClaude}
+  cwd: .
+  pollIntervalMs: 100
+  mcpConfigPath: ${mcpConfigPath}
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+transports:
+  - name: e2e-relay
+    type: relay
+    enabled: true
+    baseUrl: ${relay.baseUrl}
+    secret: wrong-secret
+    timeoutMs: 1000
+`, "utf8");
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath, mcpConfigPath));
+
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
+    cwd: pluginRoot,
+    env: {
+      ...process.env,
+      LEGAX_CONFIG: configPath
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  daemon.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  await waitFor(async () => {
+    assert.match(stderr, /restart disabled for claude after 3 rapid failures/, stderr);
+  }, { timeoutMs: 5000, intervalMs: 50 });
+  await sleep(200);
+
+  const starts = stderr.match(/\[legax\] starting claude/g) ?? [];
+  assert.equal(starts.length, 4, stderr);
+});
+
+test("daemon refuses a second instance that shares runtime state", async (t) => {
+  const relay = await startRelay(t, { sessionId: "daemon-singleton-e2e" });
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+daemon:
+  restart: false
+  launchOnDemand: false
+  remotePollIntervalMs: 100
+codex:
+  enabled: true
+  autoStart: false
+claude:
+  enabled: false
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+`);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
+    cwd: pluginRoot,
+    env: {
+      ...process.env,
+      LEGAX_CONFIG: configPath,
+      LEGAX_SECRET: relay.desktopSecret
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  daemon.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  await waitFor(async () => {
+    await fs.stat(`${runtimeStatePath}.daemon.lock`);
+  }, { timeoutMs: 5000, intervalMs: 50 });
+
+  const second = await runNode(["scripts/legax-daemon.mjs"], {
+    LEGAX_CONFIG: configPath,
+    LEGAX_SECRET: relay.desktopSecret
+  });
+  assert.equal(second.code, 1, second.stderr);
+  assert.match(second.stderr, /daemon already running/i);
 });
 
 test("daemon launches Claude and Gemini on demand and writes MCP configs", async (t) => {
