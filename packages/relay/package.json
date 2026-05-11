@@ -1,0 +1,47 @@
+{
+  "name": "@legax/relay",
+  "version": "0.0.2",
+  "type": "module",
+  "description": "Legax self-hosted relay package.",
+  "license": "MIT",
+  "author": {
+    "name": "Legax Maintainers",
+    "url": "https://github.com/zhanex/legax"
+  },
+  "homepage": "https://github.com/zhanex/legax#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhanex/legax.git",
+    "directory": "packages/relay"
+  },
+  "bugs": {
+    "url": "https://github.com/zhanex/legax/issues"
+  },
+  "keywords": [
+    "legax",
+    "relay",
+    "telegram",
+    "twa",
+    "mobile"
+  ],
+  "bin": {
+    "legax-relay": "bin/legax-relay.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/package-workspace.mjs relay"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=Legax Relay
+Documentation=https://github.com/zhanex/legax
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=legax
+Group=legax
+Environment=LEGAX_CONFIG=/etc/legax-relay/config.yaml
+WorkingDirectory=/opt/legax-relay
+ExecStart=/usr/bin/env node /opt/legax-relay/server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/legax-relay
+
+[Install]
+WantedBy=multi-user.target

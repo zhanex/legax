@@ -1,0 +1,317 @@
+# Legax 配置示例
+# 复制为 config.yaml 后使用。所有密钥 / chatId 直接 inline 写在本文件中
+# （没有 .env 层），由于 config.yaml 已经在 .gitignore 中，旋转任何密钥时直接改这里即可。
+
+sessionId: default
+displayName: Desktop Agent
+storagePath: ./data/mcp-state.json
+runtimeStatePath: ./data/runtime-state.json
+
+# 自部署 relay 服务的配置。被 scripts/simple-relay-server.mjs 与独立的
+# self-hosted-relay/server.mjs 共同读取（独立 relay 启动时通过 LEGAX_CONFIG
+# 指向同一份 yaml）。这里的 `secret` **必须**与下方 transports[type=relay].secret
+# 完全一致——adapter 用它经 /api/events 向 relay 鉴权。
+relay:
+  host: 0.0.0.0
+  port: 8787
+  publicBaseUrl: https://YOUR_RELAY_HOST          # Telegram Mini App 使用的公网 HTTPS 地址
+  telegramWebAppLaunchTokenTtlMs: 300000          # TWA 短期启动令牌有效期
+  secret: replace-with-a-long-random-secret    # 桌面端密钥；与 transports[type=relay].secret 必须一致
+  storePath: ./data/relay-store.json
+  allowInsecureDev: false                       # true 时无密钥也可启动；同时强制绑定 127.0.0.1
+  maxRequestBodyBytes: 1048576
+  audit:
+    enabled: true
+    path: ./data/relay-audit.jsonl
+    maxTail: 1000
+    textPreview: 80                             # 设为 0 表示不存消息正文预览
+
+mcp:
+  enabled: true
+  role: capability
+  agentId: mcp-agent
+  agentLabel: Legax MCP
+
+remote:
+  enabled: true
+  defaultMode: interactive
+  pauseAll: false
+
+routing:
+  defaultTarget: none
+  allowBroadcast: false
+  allowControlBroadcast: true
+
+approvals:
+  enabled: true
+  allowFromPhone: true
+  timeoutMs: 300000
+  defaultOnTimeout: deny
+
+daemon:
+  restart: true
+  restartBackoffMs: 1000
+  restartBackoffMaxMs: 30000
+  remoteRouter: true
+  remotePollIntervalMs: 1000
+  projectRoots:               # Telegram Mini App 项目选择器可浏览的本机目录
+    - F:/workspace
+  projectRootHiddenNames:
+    - .git
+    - node_modules
+    - dist
+    - build
+  notifications:
+    telegram:
+      # Telegram 的 daemon 全局默认。CLI 段和 transport 段可以继续覆盖；
+      # relay/webhook 不受这个键过滤。
+      # all：完整事件流。
+      # important：审批、输入请求、菜单/状态操作、错误和最终结论。
+      # actionable：只推审批、输入请求和带按钮的菜单/状态操作。
+      # final：只推最终助手结论。
+      # none：关闭 Telegram 出站通知。
+      messageDetail: important
+      pinActiveContext: true          # 在 Telegram 顶部固定当前 CLI / 项目 / session
+
+security:
+  redactByDefault: true
+  # 默认覆盖常见凭据格式的保守正则。需要时可继续追加 provider 专属 token；
+  # 单次调用如需放行原文，使用 allowSensitive: true（仅对该次调用生效）。
+  redactPatterns:
+    - '(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*\S+'
+    - 'sk-[A-Za-z0-9_-]{20,}'                               # OpenAI / Anthropic 风格
+    - 'gh[pousr]_[A-Za-z0-9]{20,}'                          # GitHub PAT 经典 / OAuth
+    - 'github_pat_[A-Za-z0-9_]{20,}'                        # GitHub PAT 细粒度
+    - '\bAKIA[0-9A-Z]{16}\b'                                # AWS access key id
+    - 'xox[abprs]-[A-Za-z0-9-]{10,}'                        # Slack token
+    - '\bhf_[A-Za-z0-9]{20,}\b'                             # Hugging Face token
+    - '\b\d{8,}:[A-Za-z0-9_-]{30,}\b'                       # Telegram bot token
+    - 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'  # JWT
+    - '-----BEGIN [A-Z ]+PRIVATE KEY-----'                  # PEM 密钥头
+
+# Transports 决定出站事件的去向以及入站回复的来源。
+# 所有值（secrets / tokens / chatId / url）都直接 inline 写在 YAML 里——没有 .env 层。
+# 这份 config.yaml 已经在 .gitignore，需要轮换任何密钥时直接改这里即可。
+# 推荐默认：只启用 `self-hosted-relay`。Telegram 与 webhook 在本模板里保持关闭；
+# 启用前请阅读 docs/ARCHITECTURE.zh-CN.md 中的取舍以及 README.zh-CN.md 的"本机文件与密钥"。
+transports:
+  - name: self-hosted-relay
+    type: relay
+    enabled: true
+    baseUrl: http://127.0.0.1:8787
+    secret: replace-with-a-long-random-secret   # 必须与上方 relay.secret 一致
+    timeoutMs: 15000
+
+  # Telegram transport 主要用于快速本地调试，以及手机上已有 Telegram 的用户。
+  # 默认关闭，原因：(a) bot token 是全权凭据；(b) Telegram 在某些网络环境不可达
+  # （尤其是中国大陆）；(c) self-hosted relay 数据始终留在你自己的基础设施内。
+  - name: telegram
+    type: telegram
+    enabled: false
+    botToken: TELEGRAM_BOT_TOKEN_VALUE_HERE     # 粘贴 @BotFather 给的 token
+    chatId: 0                                   # 真实数字 chat id（用 scripts/configure-telegram-chat.mjs 发现）
+    # apiBaseUrl: http://127.0.0.1:9000/bot     # 可选：本地 Bot API 网关或测试 relay；默认连接 Telegram
+    defaultTarget: none
+    timeoutMs: 15000
+    notifications:
+      # 这个远端自己的 Telegram 格式/投递覆盖。只影响当前 transport，
+      # 且优先级高于 daemon 全局默认和 CLI 默认。
+      maxMessageChars: 3900       # Telegram 硬限制是 4096；这里给格式化留余量。
+      splitLongMessages: true     # 长文本拆成多条 sendMessage。
+      maxParts: 8                 # 超出部分会在最后一条中截断并提示。
+
+  - name: generic-webhook
+    type: webhook
+    enabled: false
+    url: https://example.com/your-webhook
+    secret: replace-with-a-long-webhook-secret
+    timeoutMs: 15000
+
+# Codex 适配器。默认 autoStart 关：daemon 启动时**不**拉起 codex 适配器，也**不**起
+# 共享 `codex app-server`。只有当手机或 Telegram 触发了 codex（如从 `/start` 菜单选择 Codex、
+# 或文本被路由到 codex-cli）时，daemon 才按需启动适配器；适配器再按 sharedServerMode
+# 做 connect-or-start。如果你希望开机就把共享后端拉起来便于早诊断，把 autoStart 改为 true。
+codex:
+  enabled: true
+  autoStart: false
+  agentId: codex-cli
+  agentLabel: Codex CLI
+  cliBackend: app-server-ws
+  useExisting: true
+  appServerUrl: ws://127.0.0.1:18779/rpc
+  sharedServerMode: connect-or-start
+  autoStartSharedServer: true
+  stopSharedServerOnExit: false
+  mcpEnabled: true
+  mcpRole: capability
+  mode: interactive
+  command: codex
+  args:
+    - app-server
+    - --listen
+    - ws://127.0.0.1:18779
+  cwd: .
+  threadCwd: .
+  listThreadsOnStartup: false
+  threadListLimit: 30
+  threadListCwd: all
+  sessionHistoryOnSelectLimit: 1
+  threadSourceKinds:
+    - cli
+    - vscode
+    - exec
+    - appServer
+    - subAgent
+    - subAgentReview
+    - subAgentCompact
+    - subAgentThreadSpawn
+    - subAgentOther
+    - unknown
+  resumeSelectedThreadOnStartup: true
+  startThreadOnStartup: false
+  startThreadOnFirstMessage: false
+  approvalPolicy: on-request
+  approvalsReviewer: user
+  pollIntervalMs: 1200
+  approvalTimeoutMs: 300000
+  approvalAcceptDecision: accept
+  permissionApprovalScope: turn
+  notifyOnConnection: false
+  notifyOnTurnCompleted: true
+  forwardAgentMessages: false
+  forwardCompletionMessages: true
+  forwardStatusEvents: false
+  notifications:
+    telegram:
+      messageDetail: important
+
+claude:
+  enabled: true
+  autoStart: true
+  agentId: claude-code
+  agentLabel: Claude Code
+  supportsSessions: true
+  cliBackend: stream-json
+  useExisting: true
+  continueLatest: true
+  resumeSession: ""
+  sessionListLimit: 10
+  sessionListCwd: cwd
+  sessionHistoryOnSelectLimit: 1
+  sessionHistoryRoot: ""
+  mcpEnabled: true
+  mcpAutoConfigure: true
+  mcpRole: permission-prompt
+  mode: approval-only
+  command: claude
+  args:
+    - -p
+    - --input-format
+    - stream-json
+    - --output-format
+    - stream-json
+    - --verbose
+  cwd: .
+  pollIntervalMs: 1200
+  approvalTimeoutMs: 300000
+  permissionPromptTool: mcp__legax_permissions__approval_prompt
+  permissionBehaviorOnApprove: allow
+  permissionBehaviorOnDeny: deny
+  mcpConfigPath: ./data/claude-permission-mcp.json
+  forwardAssistantMessages: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: actionable
+
+# 桌面 App 会话 JSONL 的只读镜像。默认关闭。仅当你以桌面 App 为主 UI、
+# 又希望手机端旁观会话时启用（不能远程操作桌面 App）。需要完整双向桥接时
+# 请改用常规 `codex` 适配器 + `codex --remote ws://...` TUI。
+codexDesktopMirror:
+  enabled: false
+  autoStart: false
+  agentId: codex-desktop
+  agentLabel: Codex Desktop (mirror)
+  cliBackend: session-jsonl-tail
+  mode: monitor                    # 强制；手机消息无法注入回桌面 App
+  sessionsRoot: "~/.codex/sessions"
+  followLatest: true
+  filterToOriginator: "Codex Desktop"   # 设为 "" 可同时跟踪 CLI session
+  forwardUserMessages: true
+  forwardAgentMessages: true
+  forwardCommandRuns: true
+  forwardToolCalls: false
+  forwardCompletion: true
+  pollIntervalMs: 1500
+  rescanFilesEveryMs: 5000
+  truncateOutputBytes: 1500
+
+gemini:
+  enabled: true
+  autoStart: true
+  agentId: gemini-cli
+  agentLabel: Gemini CLI
+  supportsSessions: true
+  cliBackend: stream-json
+  useExisting: true
+  resumeExisting: latest
+  resumeSession: ""
+  sessionListArgs:
+    - --list-sessions
+  sessionListLimit: 10
+  sessionHistoryOnSelectLimit: 1
+  mcpEnabled: true
+  mcpAutoConfigure: true
+  mcpServerName: legax
+  mcpRole: capability
+  mode: monitor
+  command: gemini
+  args:
+    - --output-format
+    - stream-json
+  cwd: .
+  promptFlag: --prompt
+  approvalMode: default
+  trustWorkspace: true
+  pollIntervalMs: 1200
+  forwardMessageEvents: true
+  forwardToolEvents: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: final
+
+# OpenCode 适配器。它连接 OpenCode 的 headless HTTP server，而不是抓取 TUI。
+# 适配器默认出现在菜单中，但按需启动；serverMode: connect-or-start 时，如果
+# serverUrl 不可达，会自动执行 `opencode serve`。
+opencode:
+  enabled: true
+  autoStart: false
+  agentId: opencode
+  agentLabel: OpenCode
+  supportsSessions: true
+  cliBackend: server-http
+  useExisting: true
+  serverUrl: http://127.0.0.1:4096
+  serverMode: connect-or-start       # connect | connect-or-start | start
+  serverUsername: opencode           # OpenCode Basic Auth 用户名；默认是 opencode
+  serverPassword: ""                 # 启用 OPENCODE_SERVER_PASSWORD 时在这里同步填写
+  startupTimeoutMs: 15000
+  timeoutMs: 30000
+  sessionListLimit: 100
+  sessionPageSize: 10
+  sessionHistoryOnSelectLimit: 1
+  mcpEnabled: false
+  mode: monitor
+  command: opencode
+  args: []
+  serveArgs: []                      # 可选：完整替换 `opencode serve ...` 参数
+  cwd: .
+  model: ""
+  agent: ""
+  pollIntervalMs: 1200
+  forwardMessageEvents: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: final

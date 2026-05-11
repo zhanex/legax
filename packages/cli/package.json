@@ -1,0 +1,56 @@
+{
+  "name": "legax",
+  "version": "0.0.2",
+  "type": "module",
+  "description": "Legax CLI - agent-neutral remote interaction layer for phone replies and approval requests.",
+  "license": "MIT",
+  "author": {
+    "name": "Legax Maintainers",
+    "url": "https://github.com/zhanex/legax"
+  },
+  "homepage": "https://github.com/zhanex/legax#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhanex/legax.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/zhanex/legax/issues"
+  },
+  "keywords": [
+    "agent",
+    "approval",
+    "codex",
+    "claude",
+    "gemini",
+    "opencode",
+    "mcp",
+    "mobile",
+    "relay",
+    "telegram"
+  ],
+  "bin": {
+    "legax": "bin/legax.mjs",
+    "legax-daemon": "bin/legax-daemon.mjs",
+    "legax-daemon-control": "bin/legax-daemon-control.mjs",
+    "legax-mcp": "bin/legax-mcp.mjs",
+    "legax-relay": "bin/legax-relay.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/package-workspace.mjs cli"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

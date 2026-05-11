@@ -1,0 +1,110 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Legax .gitignore
+#
+# 本仓库为零依赖 Node.js 项目，几乎所有运行期产物都不应入库。
+# Threat-model 提示：本项目处理 Telegram bot token、relay 密钥、浏览器设备 cookie、
+# Claude/Gemini 本地会话历史等敏感信息——任何 *.local.* / *.secret.* / 真实配置
+# 都必须留在本机，不允许通过 git 推送。
+# ─────────────────────────────────────────────────────────────────────────────
+
+# === 真实配置 / 密钥（必须留在本机） ===
+config.yaml
+config.local.yaml
+config.*.local.yaml
+.env
+.env.*
+!.env.example
+*.secret
+*.secret.*
+secrets/
+
+# === 运行期数据目录（runtime-state、relay-store、e2e 临时配置等） ===
+data/
+!data/.gitkeep
+
+# === 各 Agent 的本地化设置（含绝对路径与机器特定字段） ===
+# 说明：.claude/settings.local.json 与 .gemini/settings.json 在仓库内出现的
+# 内容均为某台具体机器上 daemon 自动写入的 mcp 配置，路径绝对、密钥占位
+# （如 "desktop-secret"）一律不应入库。如需提供模板，请使用
+# .claude/settings.example.json / .gemini/settings.example.json。
+.claude/
+.gemini/
+.codex/
+.codex-plugin/*
+!.codex-plugin/
+!.codex-plugin/plugin.json
+.opencode/
+.agents/
+docs/superpowers/
+
+# === self-hosted-relay 安装/运行产物 ===
+self-hosted-relay/legax-relay.env
+self-hosted-relay/*.log
+self-hosted-relay/data/
+
+# === Node.js / 依赖（即便当前是零依赖，未来引入时立即生效） ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+.npm/
+
+# === 测试 / 覆盖率 / 缓存 ===
+coverage/
+.nyc_output/
+*.lcov
+.cache/
+.tsbuildinfo
+.eslintcache
+
+# === 日志与临时文件 ===
+*.log
+*.log.*
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# === 操作系统 ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# === 编辑器 / IDE ===
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+*.iml
+*.code-workspace
+.vs/
+.history/
+
+# === 构建产物（预留） ===
+dist/
+build/
+out/
+*.tgz
+packages/*/dist/
+packages/*/README.md
+packages/*/README.zh-CN.md
+packages/*/LICENSE
+
+# === Python（如未来加入构建脚本） ===
+__pycache__/
+*.py[cod]
+.venv/
+
+# === 本仓库专属 ===
+# 跨平台 line-ending 修复后的备份
+*.lf.bak
+*.crlf.bak

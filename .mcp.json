@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "legax": {
+      "command": "node",
+      "args": [
+        "./scripts/mcp-server.mjs"
+      ],
+      "env": {
+        "LEGAX_CONFIG": "./config.yaml"
+      },
+      "note": "Local stdio MCP server that relays Legax messages and agent-mediated approval requests to configured transports."
+    }
+  }
+}

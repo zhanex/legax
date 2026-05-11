@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a workflow, adapter, transport, or UX improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: Describe the user workflow and where Legax should fit.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Daemon
+        - Self-hosted relay
+        - Telegram
+        - Webhook
+        - MCP
+        - New adapter
+        - Existing adapter
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen, including buttons or commands when relevant?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety boundaries
+      options:
+        - label: This request does not require auto-approving native agent security prompts.
+        - label: This request does not require sharing real secrets in issues or examples.

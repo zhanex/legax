@@ -1,0 +1,49 @@
+{
+  "name": "@legax/daemon",
+  "version": "0.0.2",
+  "type": "module",
+  "description": "Legax daemon package for running local agent bridges.",
+  "license": "MIT",
+  "author": {
+    "name": "Legax Maintainers",
+    "url": "https://github.com/zhanex/legax"
+  },
+  "homepage": "https://github.com/zhanex/legax#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhanex/legax.git",
+    "directory": "packages/daemon"
+  },
+  "bugs": {
+    "url": "https://github.com/zhanex/legax/issues"
+  },
+  "keywords": [
+    "legax",
+    "daemon",
+    "agent",
+    "mcp",
+    "mobile"
+  ],
+  "bin": {
+    "legax-daemon": "bin/legax-daemon.mjs",
+    "legax-daemon-control": "bin/legax-daemon-control.mjs",
+    "legax-mcp": "bin/legax-mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/package-workspace.mjs daemon"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

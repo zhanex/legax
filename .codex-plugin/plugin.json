@@ -1,0 +1,42 @@
+{
+  "name": "legax",
+  "version": "0.0.2",
+  "description": "Relay agent messages, phone replies, and agent-mediated approval requests through self-hosted or third-party transports.",
+  "author": {
+    "name": "Legax Maintainers",
+    "url": "https://github.com/zhanex/legax"
+  },
+  "homepage": "https://github.com/zhanex/legax",
+  "repository": "https://github.com/zhanex/legax.git",
+  "license": "MIT",
+  "keywords": [
+    "mobile",
+    "remote",
+    "approval",
+    "relay",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Legax",
+    "shortDescription": "Relay agent conversations and approval checks to a phone.",
+    "longDescription": "Legax is a local-first bridge for sending agent text, phone replies, and agent-mediated permission requests through a self-hosted web relay, Telegram Bot API, or configurable webhook transports. It supports Codex CLI App Server, Claude Code, Gemini CLI, and OpenCode adapters while keeping the protocol agent-neutral.",
+    "developerName": "Legax Maintainers",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "MCP",
+      "Network"
+    ],
+    "websiteURL": "https://github.com/zhanex/legax",
+    "privacyPolicyURL": "https://github.com/zhanex/legax/blob/main/docs/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/zhanex/legax/blob/main/docs/TERMS.md",
+    "defaultPrompt": [
+      "Link this agent session to my phone.",
+      "Ask my phone before running risky commands.",
+      "Poll my mobile replies and continue."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

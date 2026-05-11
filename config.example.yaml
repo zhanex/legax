@@ -1,0 +1,326 @@
+# Legax example configuration
+# Copy this file to config.yaml. Real secrets are inline in that gitignored
+# local YAML file; there is no .env layer.
+
+sessionId: default
+displayName: Desktop Agent
+storagePath: ./data/mcp-state.json
+runtimeStatePath: ./data/runtime-state.json
+
+# Self-hosted relay server settings. Read by scripts/simple-relay-server.mjs and
+# by the standalone self-hosted-relay/server.mjs (when launched with the same
+# LEGAX_CONFIG path). The `secret` here MUST match transports[type=relay].secret
+# below — adapters use it to authenticate to the relay over /api/events.
+relay:
+  host: 0.0.0.0
+  port: 8787
+  publicBaseUrl: https://YOUR_RELAY_HOST          # public HTTPS URL used by Telegram Mini Apps
+  telegramWebAppLaunchTokenTtlMs: 300000          # short-lived TWA launch token TTL
+  secret: replace-with-a-long-random-secret    # desktop-side secret; matches transports[type=relay].secret
+  storePath: ./data/relay-store.json
+  allowInsecureDev: false                       # true to start without a secret; binds to 127.0.0.1 only
+  maxRequestBodyBytes: 1048576
+  audit:
+    enabled: true
+    path: ./data/relay-audit.jsonl
+    maxTail: 1000
+    textPreview: 80                             # 0 to omit message-body previews
+
+mcp:
+  enabled: true
+  role: capability
+  agentId: mcp-agent
+  agentLabel: Legax MCP
+
+remote:
+  enabled: true
+  defaultMode: interactive
+  pauseAll: false
+
+routing:
+  defaultTarget: none
+  allowBroadcast: false
+  allowControlBroadcast: true
+
+approvals:
+  enabled: true
+  allowFromPhone: true
+  timeoutMs: 300000
+  defaultOnTimeout: deny
+
+daemon:
+  restart: true
+  restartBackoffMs: 1000
+  restartBackoffMaxMs: 30000
+  remoteRouter: true          # daemon owns relay/Telegram inbound routing; adapters only consume their inbox
+  remotePollIntervalMs: 1000
+  projectRoots:               # local folders the Telegram Mini App project picker may browse
+    - F:/workspace
+  projectRootHiddenNames:
+    - .git
+    - node_modules
+    - dist
+    - build
+  notifications:
+    telegram:
+      # Daemon-wide default for Telegram. CLI sections and transport sections
+      # can override this; relay/webhook delivery is not filtered by this key.
+      # all: current full stream.
+      # important: approvals, input requests, menu/status actions, errors, and final answers.
+      # actionable: approvals, input requests, and menu/status actions only.
+      # final: final assistant answers only.
+      # none: disable Telegram outbound notifications.
+      messageDetail: important
+      pinActiveContext: true          # pin the active CLI/project/session context in Telegram
+
+security:
+  redactByDefault: true
+  # Conservative regex set covering common credential formats. Add your own
+  # provider-specific tokens as needed; setting allowSensitive: true on a single
+  # call bypasses these for that call only.
+  redactPatterns:
+    - '(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*\S+'
+    - 'sk-[A-Za-z0-9_-]{20,}'                               # OpenAI / Anthropic style
+    - 'gh[pousr]_[A-Za-z0-9]{20,}'                          # GitHub PAT classic / OAuth
+    - 'github_pat_[A-Za-z0-9_]{20,}'                        # GitHub PAT fine-grained
+    - '\bAKIA[0-9A-Z]{16}\b'                                # AWS access key id
+    - 'xox[abprs]-[A-Za-z0-9-]{10,}'                        # Slack token
+    - '\bhf_[A-Za-z0-9]{20,}\b'                             # Hugging Face token
+    - '\b\d{8,}:[A-Za-z0-9_-]{30,}\b'                       # Telegram bot token
+    - 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'  # JWT
+    - '-----BEGIN [A-Z ]+PRIVATE KEY-----'                  # PEM key header
+
+# Transports decide where outbound events go and where inbound replies come from.
+# All values (secrets / tokens / chat ids / urls) are inline in this YAML —
+# there is no .env layer. Keep this file out of version control (config.yaml is
+# already in .gitignore); rotate any secret directly here when needed.
+# Recommended default: only `self-hosted-relay` is enabled. Telegram and webhook
+# transports are kept off in this template; turn them on after reading the
+# tradeoffs in docs/ARCHITECTURE.md and Local files and secrets in README.md.
+transports:
+  - name: self-hosted-relay
+    type: relay
+    enabled: true
+    baseUrl: http://127.0.0.1:8787
+    secret: replace-with-a-long-random-secret    # must match relay.secret below
+    timeoutMs: 15000
+
+  # Telegram transport is intended primarily for quick local testing and for
+  # users who already have Telegram on their phone. It is disabled by default
+  # because (a) the bot token is a fully privileged credential, (b) Telegram
+  # is unreachable in some networks (notably mainland China), and (c) the
+  # self-hosted relay keeps data inside your own infrastructure.
+  - name: telegram
+    type: telegram
+    enabled: false
+    botToken: TELEGRAM_BOT_TOKEN_VALUE_HERE      # paste the @BotFather token
+    chatId: 0                                    # set to your numeric chat id (run scripts/configure-telegram-chat.mjs to discover it)
+    # apiBaseUrl: http://127.0.0.1:9000/bot      # optional: local Bot API gateway or test relay; defaults to Telegram
+    defaultTarget: none                          # choose an adapter from /start before sending plain text
+    timeoutMs: 15000
+    notifications:
+      # Remote-specific Telegram formatting/delivery override. This layer wins
+      # over daemon-wide and CLI defaults for this transport only.
+      maxMessageChars: 3900       # Telegram hard limit is 4096; leave room for formatting.
+      splitLongMessages: true     # split long text into multiple sendMessage calls.
+      maxParts: 8                 # remaining overflow is truncated with a notice.
+
+  - name: generic-webhook
+    type: webhook
+    enabled: false
+    url: https://example.com/your-webhook
+    secret: replace-with-a-long-webhook-secret
+    timeoutMs: 15000
+
+# Codex adapter. autoStart is OFF by default: the daemon does NOT spawn the
+# codex adapter or the shared `codex app-server` until a phone or Telegram
+# action targets codex (e.g. choosing Codex from `/start` and then a project/chat,
+# or routing text to codex-cli). On that first event the daemon launches the adapter, which then
+# performs sharedServerMode (connect-or-start). Set autoStart: true if you
+# prefer the shared backend up at daemon boot for early diagnostics.
+codex:
+  enabled: true
+  autoStart: false
+  agentId: codex-cli
+  agentLabel: Codex CLI
+  cliBackend: app-server-ws
+  useExisting: true
+  appServerUrl: ws://127.0.0.1:18779/rpc
+  sharedServerMode: connect-or-start
+  autoStartSharedServer: true
+  stopSharedServerOnExit: false
+  mcpEnabled: true
+  mcpRole: capability
+  mode: interactive
+  command: codex
+  args:
+    - app-server
+    - --listen
+    - ws://127.0.0.1:18779
+  cwd: .
+  threadCwd: .
+  listThreadsOnStartup: false
+  threadListLimit: 30
+  threadListCwd: all
+  sessionHistoryOnSelectLimit: 1
+  threadSourceKinds:
+    - cli
+    - vscode
+    - exec
+    - appServer
+    - subAgent
+    - subAgentReview
+    - subAgentCompact
+    - subAgentThreadSpawn
+    - subAgentOther
+    - unknown
+  resumeSelectedThreadOnStartup: true
+  startThreadOnStartup: false
+  startThreadOnFirstMessage: false
+  approvalPolicy: on-request
+  approvalsReviewer: user
+  pollIntervalMs: 1200
+  approvalTimeoutMs: 300000
+  approvalAcceptDecision: accept
+  permissionApprovalScope: turn
+  notifyOnConnection: false
+  notifyOnTurnCompleted: true
+  forwardAgentMessages: false
+  forwardCompletionMessages: true
+  forwardStatusEvents: false
+  notifications:
+    telegram:
+      messageDetail: important
+
+claude:
+  enabled: true
+  autoStart: true
+  agentId: claude-code
+  agentLabel: Claude Code
+  supportsSessions: true
+  cliBackend: stream-json
+  useExisting: true
+  continueLatest: true
+  resumeSession: ""
+  sessionListLimit: 10
+  sessionListCwd: cwd
+  sessionHistoryOnSelectLimit: 1
+  sessionHistoryRoot: ""
+  mcpEnabled: true
+  mcpAutoConfigure: true
+  mcpRole: permission-prompt
+  mode: approval-only
+  command: claude
+  args:
+    - -p
+    - --input-format
+    - stream-json
+    - --output-format
+    - stream-json
+    - --verbose
+  cwd: .
+  pollIntervalMs: 1200
+  approvalTimeoutMs: 300000
+  permissionPromptTool: mcp__legax_permissions__approval_prompt
+  permissionBehaviorOnApprove: allow
+  permissionBehaviorOnDeny: deny
+  mcpConfigPath: ./data/claude-permission-mcp.json
+  forwardAssistantMessages: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: actionable
+
+# Read-only mirror of the Codex desktop app's session JSONL files. Off by
+# default. Use only when the desktop app is your primary UI and you just want
+# the phone to observe activity (no remote control). The full bidirectional
+# bridge requires the regular `codex` adapter + `codex --remote ws://...` TUI.
+codexDesktopMirror:
+  enabled: false
+  autoStart: false
+  agentId: codex-desktop
+  agentLabel: Codex Desktop (mirror)
+  cliBackend: session-jsonl-tail
+  mode: monitor                    # forced; phone messages cannot be injected back
+  sessionsRoot: "~/.codex/sessions"
+  followLatest: true
+  filterToOriginator: "Codex Desktop"   # set to "" to also follow CLI sessions
+  forwardUserMessages: true
+  forwardAgentMessages: true
+  forwardCommandRuns: true
+  forwardToolCalls: false
+  forwardCompletion: true
+  pollIntervalMs: 1500
+  rescanFilesEveryMs: 5000
+  truncateOutputBytes: 1500
+
+gemini:
+  enabled: true
+  autoStart: true
+  agentId: gemini-cli
+  agentLabel: Gemini CLI
+  supportsSessions: true
+  cliBackend: stream-json
+  useExisting: true
+  resumeExisting: latest
+  resumeSession: ""
+  sessionListArgs:
+    - --list-sessions
+  sessionListLimit: 10
+  sessionHistoryOnSelectLimit: 1
+  mcpEnabled: true
+  mcpAutoConfigure: true
+  mcpServerName: legax
+  mcpRole: capability
+  mode: monitor
+  command: gemini
+  args:
+    - --output-format
+    - stream-json
+  cwd: .
+  promptFlag: --prompt
+  approvalMode: default
+  trustWorkspace: true
+  pollIntervalMs: 1200
+  forwardMessageEvents: true
+  forwardToolEvents: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: final
+
+# OpenCode adapter. It talks to OpenCode's headless HTTP server instead of
+# scraping the TUI. The adapter stays visible in menus but is started on demand;
+# with serverMode: connect-or-start it will run `opencode serve` when the server
+# is not already reachable.
+opencode:
+  enabled: true
+  autoStart: false
+  agentId: opencode
+  agentLabel: OpenCode
+  supportsSessions: true
+  cliBackend: server-http
+  useExisting: true
+  serverUrl: http://127.0.0.1:4096
+  serverMode: connect-or-start       # connect | connect-or-start | start
+  serverUsername: opencode           # OpenCode Basic Auth username; default is opencode
+  serverPassword: ""                 # set when OPENCODE_SERVER_PASSWORD is used
+  startupTimeoutMs: 15000
+  timeoutMs: 30000
+  sessionListLimit: 100
+  sessionPageSize: 10
+  sessionHistoryOnSelectLimit: 1
+  mcpEnabled: false
+  mode: monitor
+  command: opencode
+  args: []
+  serveArgs: []                      # optional full replacement for `opencode serve ...`
+  cwd: .
+  model: ""
+  agent: ""
+  pollIntervalMs: 1200
+  forwardMessageEvents: true
+  forwardStatusEvents: true
+  notifications:
+    telegram:
+      messageDetail: final

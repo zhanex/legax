@@ -1,0 +1,20 @@
+# Self-hosted Legax relay configuration.
+# Copy to /etc/legax-relay/config.yaml (the install.sh script does
+# this for you with auto-generated secrets). The running relay reads ONLY this
+# YAML — there is no environment-file layer.
+
+sessionId: default
+
+relay:
+  host: 0.0.0.0
+  port: 8787
+  publicBaseUrl: https://YOUR_RELAY_HOST              # public HTTPS URL used by Telegram Mini Apps
+  secret: replace-with-a-long-random-secret           # required; matches transports[type=relay].secret on the desktop side
+  storePath: /var/lib/legax-relay/relay-store.json
+  maxEventsPerSession: 500
+  maxMessagesPerSession: 500
+  audit:
+    enabled: true
+    path: /var/lib/legax-relay/relay-audit.jsonl
+    maxTail: 1000
+    textPreview: 80

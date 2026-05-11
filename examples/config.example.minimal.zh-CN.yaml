@@ -1,0 +1,62 @@
+# Legax 最小配置。
+# 目标：在本机把一个 Agent（Codex）通过一个 transport（self-hosted relay）连到手机。
+# 复制为 config.yaml 后微调；完整可选项见 config.example.zh-CN.yaml。
+# 所有密钥 inline 写在本文件，config.yaml 已被 .gitignore，不涉及 .env。
+
+sessionId: default
+displayName: Desktop Agent
+
+# Self-hosted relay 服务配置（由 scripts/simple-relay-server.mjs 读取）。
+# 生成密钥：openssl rand -base64 36
+relay:
+  host: 127.0.0.1
+  port: 8787
+  secret: replace-with-a-long-random-secret           # 桌面端密钥；必须与 transports[type=relay].secret 一致
+  storePath: ./data/relay-store.json
+
+# 一个 transport。daemon 起来后：
+#   node scripts/simple-relay-server.mjs
+# 然后运行 `npm run daemon:pair`，并在手机上打开 http://YOUR_HOST:8787/。
+transports:
+  - name: self-hosted-relay
+    type: relay
+    enabled: true
+    baseUrl: http://127.0.0.1:8787
+    secret: replace-with-a-long-random-secret         # 必须与上方 relay.secret 一致
+    timeoutMs: 15000
+
+# 路由：单 Agent 场景用默认值即可。
+routing:
+  defaultTarget: codex-cli
+
+# 审批：危险动作前问手机；超时按拒绝处理。
+approvals:
+  enabled: true
+  allowFromPhone: true
+  timeoutMs: 300000
+  defaultOnTimeout: deny
+
+# Redact：保持开启；daemon 会从出站文本中剔除常见 token 格式。
+security:
+  redactByDefault: true
+
+# 一个 Agent：Codex 通过共享 WebSocket app-server 后端接入。
+codex:
+  enabled: true
+  autoStart: true
+  agentId: codex-cli
+  agentLabel: Codex CLI
+  cliBackend: app-server-ws
+  appServerUrl: ws://127.0.0.1:18779/rpc
+  sharedServerMode: connect-or-start
+  autoStartSharedServer: true
+  useExisting: true
+  mode: interactive
+  command: codex
+  args:
+    - app-server
+    - --listen
+    - ws://127.0.0.1:18779
+
+# 最小模板有意省略 claude / gemini / opencode。
+# 需要时从 config.example.zh-CN.yaml 复制对应段落即可。

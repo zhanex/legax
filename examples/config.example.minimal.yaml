@@ -1,0 +1,62 @@
+# Minimal Legax configuration.
+# Goal: link ONE agent (Codex) to ONE transport (self-hosted relay) on localhost.
+# Copy to config.yaml and adjust. For the full set of options, see config.example.yaml.
+# All secrets are inline — config.yaml is gitignored, no .env layer involved.
+
+sessionId: default
+displayName: Desktop Agent
+
+# Self-hosted relay server settings (read by scripts/simple-relay-server.mjs).
+# Generate fresh secrets with: openssl rand -base64 36
+relay:
+  host: 127.0.0.1
+  port: 8787
+  secret: replace-with-a-long-random-secret           # desktop side; must match transports[type=relay].secret
+  storePath: ./data/relay-store.json
+
+# One transport. After daemon is up:
+#   node scripts/simple-relay-server.mjs
+# Then run `npm run daemon:pair` and open http://YOUR_HOST:8787/ on the phone.
+transports:
+  - name: self-hosted-relay
+    type: relay
+    enabled: true
+    baseUrl: http://127.0.0.1:8787
+    secret: replace-with-a-long-random-secret         # must match relay.secret above
+    timeoutMs: 15000
+
+# Routing: with a single agent, the defaults are fine.
+routing:
+  defaultTarget: codex-cli
+
+# Approvals: ask the phone before risky agent actions; deny on timeout.
+approvals:
+  enabled: true
+  allowFromPhone: true
+  timeoutMs: 300000
+  defaultOnTimeout: deny
+
+# Redaction: keep on; the daemon scrubs common token formats from outbound text.
+security:
+  redactByDefault: true
+
+# One agent: Codex via the shared websocket app-server backend.
+codex:
+  enabled: true
+  autoStart: true
+  agentId: codex-cli
+  agentLabel: Codex CLI
+  cliBackend: app-server-ws
+  appServerUrl: ws://127.0.0.1:18779/rpc
+  sharedServerMode: connect-or-start
+  autoStartSharedServer: true
+  useExisting: true
+  mode: interactive
+  command: codex
+  args:
+    - app-server
+    - --listen
+    - ws://127.0.0.1:18779
+
+# claude / gemini / opencode are intentionally omitted in the minimal template.
+# Add them by copying the corresponding section from config.example.yaml.

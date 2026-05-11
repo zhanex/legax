@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+
+name="Legax Relay"
+description="Self-hosted relay for Legax"
+command="/usr/bin/node"
+command_args="/opt/legax-relay/server.mjs"
+command_user="legax:legax"
+directory="/opt/legax-relay"
+pidfile="/run/legax-relay.pid"
+command_background="yes"
+output_log="/var/log/legax-relay.log"
+error_log="/var/log/legax-relay.err"
+
+depend() {
+  need net
+}
+
+start_pre() {
+  checkpath --directory --owner legax:legax --mode 0750 /var/lib/legax-relay
+  export LEGAX_CONFIG=/etc/legax-relay/config.yaml
+}

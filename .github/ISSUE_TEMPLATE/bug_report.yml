@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible Legax failure.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real bot tokens, relay secrets, webhook URLs, chat IDs, local conversation history, or exploit details. Use the private security process for vulnerabilities.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Daemon
+        - Self-hosted relay
+        - Telegram
+        - Webhook
+        - MCP
+        - Codex adapter
+        - Claude Code adapter
+        - Gemini CLI adapter
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include commands and sanitized config snippets.
+      placeholder: |
+        1. Run ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: node --version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      render: text
