@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { closeHttpServer, fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
 
 test("OpenCode link dry-run reports server-http configuration", async (t) => {
   const relay = await startRelay(t, { sessionId: "opencode-dry-run-e2e" });
@@ -290,7 +290,7 @@ async function startFakeOpenCodeServer(t, { sessions, messages, replyText }) {
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
   return {
     baseUrl,
     requests: state.requests
