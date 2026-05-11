@@ -45,6 +45,8 @@ legax relay start
 legax daemon start
 ```
 
+For a guided deployment path, see [User Manual](docs/USER_MANUAL.md). If an AI assistant is installing Legax for you, point it at [AI Install Guide](docs/AI_INSTALL.md).
+
 `legax init` writes `config.yaml` under the Legax home directory by default. Set `LEGAX_HOME` to choose a different operator-owned directory, or pass `--config <path>` for a single command.
 
 Legax is published as three fixed-version packages: `legax`, `@legax/daemon`, and `@legax/relay` always share the same version. For split deployments, install `@legax/relay` on the public server and `legax` or `@legax/daemon` on the development machine:
@@ -85,7 +87,7 @@ legax daemon start
 - `self-hosted-relay/` — standalone Linux relay installer and service files.
 - `skills/legax/` — MCP skill documentation surfaced to host agents.
 - `tests/e2e/` — end-to-end tests for relay, adapters, and runtime state.
-- `docs/` — architecture, functional boundaries, protocol, release process, roadmap, documentation standards, privacy notice, terms of use.
+- `docs/` — user manual, AI install guide, architecture, functional boundaries, protocol, release process, roadmap, documentation standards, privacy notice, terms of use.
 - `.github/` — CI workflow, contributing guide, security policy, support guide, code of conduct.
 
 ## Configuration
