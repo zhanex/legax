@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { fetchJson, getFreePort, installedBin, waitFor } from "./helpers.mjs";
+import { fetchJson, getFreePort, installedBin, stopProcessTree, waitFor } from "./helpers.mjs";
 import { packageRoot } from "../../scripts/lib/paths.mjs";
 
 function runNpm(args, options = {}) {
@@ -38,22 +38,6 @@ function runBin(command, args, options = {}) {
   });
 }
 
-function killProcessTree(pid) {
-  if (!pid) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
-      stdio: "ignore",
-      windowsHide: true
-    });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // Process already exited.
-  }
-}
-
 test("cli workspace package installs without a separate core package", async (t) => {
   const packDir = await fs.mkdtemp(path.join(os.tmpdir(), "legax-cli-pack-"));
   const prefix = await fs.mkdtemp(path.join(os.tmpdir(), "legax-cli-prefix-"));
@@ -78,7 +62,20 @@ test("cli workspace package installs without a separate core package", async (t)
 
   const init = runBin(legax, ["init", "--json"], { env, encoding: "utf8" });
   assert.equal(init.status, 0, init.stderr || init.error?.message);
-  assert.equal(JSON.parse(init.stdout).configPath, path.join(home, "config.yaml"));
+  const initBody = JSON.parse(init.stdout);
+  assert.equal(initBody.configPath, path.join(home, "config.yaml"));
+  // This package smoke test checks that the installed CLI works. Do not depend
+  // on the CI runner having real agent CLIs on PATH.
+  await fs.appendFile(initBody.configPath, `
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+`, "utf8");
 
   const doctor = runBin(legax, ["doctor", "--offline", "--json"], { env, encoding: "utf8" });
   assert.equal(doctor.status, 0, doctor.stderr || doctor.error?.message);
@@ -145,6 +142,7 @@ transports: []
 
   const child = spawn(installedBin(prefix, "legax-relay"), ["--config", configPath], {
     env: { ...process.env, LEGAX_HOME: home },
+    detached: process.platform !== "win32",
     shell: process.platform === "win32",
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -152,7 +150,7 @@ transports: []
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => killProcessTree(child.pid));
+  t.after(() => stopProcessTree(child));
 
   await waitFor(async () => {
     const health = await fetchJson(`http://127.0.0.1:${port}/health`, { skipRelayCookie: true });

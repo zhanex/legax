@@ -5,7 +5,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { closeHttpServer, dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
 
 test("Codex App Server link dry-run reads YAML config without starting codex", async (t) => {
   const relay = await startRelay(t, { sessionId: "codex-link-e2e" });
@@ -681,7 +681,7 @@ async function startWebhook(t) {
   });
   const port = await getFreePort();
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
   return {
     url: `http://127.0.0.1:${port}/agent-link`,
     events
@@ -814,10 +814,10 @@ async function startFakeCodexWebSocketServer(t) {
   });
   const port = await getFreePort();
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => {
+  t.after(() => {
     for (const socket of sockets) socket.destroy();
-    server.close(resolve);
-  }));
+    return closeHttpServer(server);
+  });
   return { url: `ws://127.0.0.1:${port}/rpc` };
 }
 

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fetchJson, getFreePort, waitFor } from "./helpers.mjs";
+import { fetchJson, getFreePort, spawnNodeForTest, waitFor } from "./helpers.mjs";
 
 import {
   configDirFromConfigPath,
@@ -57,6 +57,18 @@ test("legax doctor reads explicit config path outside package root", async (t) =
   const configPath = path.join(home, "custom.yaml");
 
   assert.equal(runLegax(["init", "--config", configPath, "--json"], { LEGAX_HOME: home }).status, 0);
+  // This test checks config path resolution, not whether the runner has real
+  // agent CLIs on PATH.
+  await fs.appendFile(configPath, `
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+`, "utf8");
   const doctor = runLegax(["doctor", "--config", configPath, "--offline", "--json"], { LEGAX_HOME: home });
   assert.equal(doctor.status, 0, doctor.stderr);
   assert.equal(JSON.parse(doctor.stdout).configPath, configPath);
@@ -162,7 +174,7 @@ relay:
 transports: []
 `, "utf8");
 
-  const child = spawn(process.execPath, ["scripts/legax-cli.mjs", "relay"], {
+  const child = spawnNodeForTest(t, ["scripts/legax-cli.mjs", "relay"], {
     cwd: packageRoot,
     env: { ...process.env, LEGAX_CONFIG: "", LEGAX_HOME: home },
     stdio: ["ignore", "ignore", "pipe"]
@@ -171,8 +183,6 @@ transports: []
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => child.kill());
-
   const baseUrl = `http://127.0.0.1:${port}`;
   await waitFor(async () => {
     const health = await fetchJson(`${baseUrl}/health`, { skipRelayCookie: true });

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,6 +42,71 @@ export function installedBin(prefix, name) {
   return process.platform === "win32"
     ? path.join(prefix, `${name}.cmd`)
     : path.join(prefix, "bin", name);
+}
+
+export function closeHttpServer(server) {
+  return new Promise((resolve) => {
+    server.close(resolve);
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+  });
+}
+
+export function spawnNodeForTest(t, args, options = {}) {
+  const child = spawnNodeProcess(args, options);
+  t.after(() => stopProcessTree(child));
+  return child;
+}
+
+function spawnNodeProcess(args, options = {}) {
+  return spawn(process.execPath, args, {
+    ...options,
+    detached: process.platform !== "win32"
+  });
+}
+
+export async function stopProcessTree(child, { timeoutMs = 3000 } = {}) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const closed = new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    child.once("close", resolve);
+  });
+
+  killProcessTree(child, "SIGTERM");
+  const exited = await Promise.race([
+    closed.then(() => true),
+    sleep(timeoutMs).then(() => false)
+  ]);
+  if (exited) return;
+
+  killProcessTree(child, "SIGKILL");
+  await Promise.race([closed, sleep(1000)]);
+}
+
+function killProcessTree(child, signal) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    if (!result.error && result.status === 0) return;
+  } else {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall through to killing the direct child if it was not a process group.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Best-effort test cleanup.
+  }
 }
 
 export async function fetchJson(url, options = {}) {
@@ -105,7 +170,7 @@ export async function startRelay(t, {
     + `  audit:\n`
     + `    enabled: false\n`;
   await fs.writeFile(relayConfigPath, configBom ? `\uFEFF${yaml}` : yaml, "utf8");
-  const child = spawn(process.execPath, [path.join(pluginRoot, script)], {
+  const child = spawnNodeProcess([path.join(pluginRoot, script)], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -120,7 +185,7 @@ export async function startRelay(t, {
     stderr += chunk;
   });
   t.after(async () => {
-    child.kill();
+    await stopProcessTree(child);
     relayCookies.delete(`http://127.0.0.1:${port}`);
     await fs.rm(storePath, { force: true });
     await fs.rm(relayConfigPath, { force: true });

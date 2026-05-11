@@ -4,7 +4,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { closeHttpServer, dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, spawnNodeForTest, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
 
 test("daemon starts enabled Codex, Claude, and Gemini adapters from one YAML config", async (t) => {
   const relay = await startRelay(t, { sessionId: "daemon-e2e" });
@@ -47,7 +47,7 @@ gemini:
 `);
   t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath, mcpConfigPath, geminiMcpConfigPath));
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -60,8 +60,6 @@ gemini:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await waitFor(async () => {
     const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
     const texts = events.events.map((event) => event.text);
@@ -173,7 +171,7 @@ gemini:
     await fs.rm(geminiCwd, { recursive: true, force: true });
   });
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -186,8 +184,6 @@ gemini:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await waitFor(async () => {
     const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
     const texts = events.events.map((event) => event.text);
@@ -231,7 +227,7 @@ gemini:
 `);
   t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath, claudeMcpConfigPath));
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -244,8 +240,6 @@ gemini:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await fetchJson(`${relay.baseUrl}/api/messages`, {
     method: "POST",
     headers: {
@@ -321,7 +315,7 @@ opencode:
     await fs.rm(projectRoot, { recursive: true, force: true });
   });
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -334,8 +328,6 @@ opencode:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await fetchJson(`${relay.baseUrl}/api/messages`, {
     method: "POST",
     headers: {
@@ -482,7 +474,7 @@ opencode:
     await fs.rm(projectRoot, { recursive: true, force: true });
   });
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -495,8 +487,6 @@ opencode:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await fetchJson(`${relay.baseUrl}/api/messages`, {
     method: "POST",
     headers: {
@@ -543,7 +533,7 @@ opencode:
 `);
   t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -556,8 +546,6 @@ opencode:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   await fetchJson(`${relay.baseUrl}/api/messages`, {
     method: "POST",
     headers: {
@@ -629,7 +617,7 @@ transports:
     await fs.rm(geminiCwd, { recursive: true, force: true });
   });
 
-  const daemon = spawn(process.execPath, ["scripts/legax-daemon.mjs"], {
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
     cwd: pluginRoot,
     env: {
       ...process.env,
@@ -642,8 +630,6 @@ transports:
   daemon.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => daemon.kill());
-
   telegram.pushMessage("/start");
   const menu = await telegram.waitForSend((body) => /Choose a CLI adapter/.test(body.text ?? ""), { detail: () => stderr });
   assert.match(menu.text, /Gemini CLI/);
@@ -744,7 +730,7 @@ async function startFakeTelegram(t) {
     sendJsonResponse(res, { ok: false, description: `unexpected method ${method}` }, 404);
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
 
   function pushMessage(text) {
     pendingUpdates.push({
@@ -858,7 +844,7 @@ async function startFakeOpenCodeServer(t, replyText) {
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
   return {
     baseUrl,
     requests: state.requests
