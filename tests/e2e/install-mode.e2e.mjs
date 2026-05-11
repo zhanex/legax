@@ -57,6 +57,18 @@ test("legax doctor reads explicit config path outside package root", async (t) =
   const configPath = path.join(home, "custom.yaml");
 
   assert.equal(runLegax(["init", "--config", configPath, "--json"], { LEGAX_HOME: home }).status, 0);
+  // This test checks config path resolution, not whether the runner has real
+  // agent CLIs on PATH.
+  await fs.appendFile(configPath, `
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+`, "utf8");
   const doctor = runLegax(["doctor", "--config", configPath, "--offline", "--json"], { LEGAX_HOME: home });
   assert.equal(doctor.status, 0, doctor.stderr);
   assert.equal(JSON.parse(doctor.stdout).configPath, configPath);
