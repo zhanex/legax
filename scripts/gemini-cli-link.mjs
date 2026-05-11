@@ -824,6 +824,7 @@ class GeminiCliLink {
         ...(settings.trustWorkspace === true ? { GEMINI_CLI_TRUST_WORKSPACE: "true" } : {})
       },
       shell,
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdoutBuffer = "";
