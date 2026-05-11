@@ -47,7 +47,21 @@ legax daemon start
 
 `legax init` writes `config.yaml` under the Legax home directory by default. Set `LEGAX_HOME` to choose a different operator-owned directory, or pass `--config <path>` for a single command.
 
-For a guided deployment path, see [User Manual](docs/USER_MANUAL.md). If an AI assistant is installing Legax for you, point it at [AI Install Guide](docs/AI_INSTALL.md).
+For a guided deployment path, see [User Manual](docs/USER_MANUAL.md).
+
+### AI-assisted setup
+
+If you want a coding agent or agent proxy to install and configure Legax for you, copy this block into that agent:
+
+```text
+Install and configure Legax for me.
+
+Use the AI-facing install guide as your execution checklist:
+- If you are working in a local Legax checkout, read docs/AI_INSTALL.md.
+- Otherwise, read https://github.com/zhanex/legax/blob/main/docs/AI_INSTALL.md.
+
+Follow the guide exactly. Do not print secrets or commit local config/runtime files. Ask me before creating DNS records, exposing ports, rotating secrets, changing npm auth, or selecting a Telegram chat. Finish by running the validation commands from the guide and summarize the config paths, enabled transports, enabled agent CLIs, and any remaining manual steps.
+```
 
 Legax is published as three fixed-version packages: `legax`, `@legax/daemon`, and `@legax/relay` always share the same version. For split deployments, install `@legax/relay` on the public server and `legax` or `@legax/daemon` on the development machine:
 

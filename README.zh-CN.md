@@ -45,9 +45,25 @@ legax relay start
 legax daemon start
 ```
 
-Legax 以三个 fixed-version packages 发布：`legax`、`@legax/daemon`、`@legax/relay` 始终使用同一个版本号。分离部署时，在公网服务器安装 `@legax/relay`，在开发机安装 `legax` 或 `@legax/daemon`：
+`legax init` 默认会把 `config.yaml` 写入 Legax home 目录。你可以设置 `LEGAX_HOME` 来选择自己的运行目录，也可以在单次命令中传入 `--config <path>`。
 
-如果需要按步骤部署，请阅读[用户操作手册](docs/USER_MANUAL.zh-CN.md)。如果由 AI 助手帮你安装和配置 Legax，请把[AI 安装配置指南](docs/AI_INSTALL.zh-CN.md)交给它执行。
+如果需要按步骤部署，请阅读[用户操作手册](docs/USER_MANUAL.zh-CN.md)。
+
+### AI 辅助安装
+
+如果想让 coding agent 或 agent 代理帮你安装和配置 Legax，把下面这段复制粘贴到那个 agent 里：
+
+```text
+请帮我安装并配置 Legax。
+
+请把面向 AI 的安装配置指南当作执行清单：
+- 如果你正在本地 Legax checkout 中工作，请阅读 docs/AI_INSTALL.zh-CN.md。
+- 否则，请阅读 https://github.com/zhanex/legax/blob/main/docs/AI_INSTALL.zh-CN.md。
+
+严格按指南执行。不要打印密钥，也不要提交本地配置或运行时文件。创建 DNS 记录、暴露端口、轮换密钥、修改 npm auth、选择 Telegram chat 前，必须先问我。最后运行指南中的验证命令，并总结配置文件路径、已启用的 transport、已启用的 agent CLI，以及仍需我手动处理的事项。
+```
+
+Legax 以三个 fixed-version packages 发布：`legax`、`@legax/daemon`、`@legax/relay` 始终使用同一个版本号。分离部署时，在公网服务器安装 `@legax/relay`，在开发机安装 `legax` 或 `@legax/daemon`：
 
 ```bash
 # relay 服务器
@@ -59,8 +75,6 @@ npm install -g legax
 legax relay init --domain relay.example.com
 legax daemon start
 ```
-
-`legax init` 默认会把 `config.yaml` 写入 Legax home 目录。你可以设置 `LEGAX_HOME` 来选择自己的运行目录，也可以在单次命令中传入 `--config <path>`。
 
 ## 功能
 
