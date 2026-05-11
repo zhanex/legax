@@ -78,7 +78,20 @@ test("cli workspace package installs without a separate core package", async (t)
 
   const init = runBin(legax, ["init", "--json"], { env, encoding: "utf8" });
   assert.equal(init.status, 0, init.stderr || init.error?.message);
-  assert.equal(JSON.parse(init.stdout).configPath, path.join(home, "config.yaml"));
+  const initBody = JSON.parse(init.stdout);
+  assert.equal(initBody.configPath, path.join(home, "config.yaml"));
+  // This package smoke test checks that the installed CLI works. Do not depend
+  // on the CI runner having real agent CLIs on PATH.
+  await fs.appendFile(initBody.configPath, `
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  enabled: false
+opencode:
+  enabled: false
+`, "utf8");
 
   const doctor = runBin(legax, ["doctor", "--offline", "--json"], { env, encoding: "utf8" });
   assert.equal(doctor.status, 0, doctor.stderr || doctor.error?.message);
