@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { fetchJson, getFreePort, installedBin, waitFor } from "./helpers.mjs";
+import { fetchJson, getFreePort, installedBin, stopProcessTree, waitFor } from "./helpers.mjs";
 import { packageRoot } from "../../scripts/lib/paths.mjs";
 
 function runNpm(args, options = {}) {
@@ -36,22 +36,6 @@ function runBin(command, args, options = {}) {
     ...options,
     shell: process.platform === "win32"
   });
-}
-
-function killProcessTree(pid) {
-  if (!pid) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
-      stdio: "ignore",
-      windowsHide: true
-    });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // Process already exited.
-  }
 }
 
 test("cli workspace package installs without a separate core package", async (t) => {
@@ -158,6 +142,7 @@ transports: []
 
   const child = spawn(installedBin(prefix, "legax-relay"), ["--config", configPath], {
     env: { ...process.env, LEGAX_HOME: home },
+    detached: process.platform !== "win32",
     shell: process.platform === "win32",
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -165,7 +150,7 @@ transports: []
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  t.after(() => killProcessTree(child.pid));
+  t.after(() => stopProcessTree(child));
 
   await waitFor(async () => {
     const health = await fetchJson(`http://127.0.0.1:${port}/health`, { skipRelayCookie: true });
