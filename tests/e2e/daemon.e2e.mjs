@@ -4,7 +4,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, spawnNodeForTest, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { closeHttpServer, dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, spawnNodeForTest, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
 
 test("daemon starts enabled Codex, Claude, and Gemini adapters from one YAML config", async (t) => {
   const relay = await startRelay(t, { sessionId: "daemon-e2e" });
@@ -730,7 +730,7 @@ async function startFakeTelegram(t) {
     sendJsonResponse(res, { ok: false, description: `unexpected method ${method}` }, 404);
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
 
   function pushMessage(text) {
     pendingUpdates.push({
@@ -844,7 +844,7 @@ async function startFakeOpenCodeServer(t, replyText) {
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => closeHttpServer(server));
   return {
     baseUrl,
     requests: state.requests

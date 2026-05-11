@@ -44,6 +44,14 @@ export function installedBin(prefix, name) {
     : path.join(prefix, "bin", name);
 }
 
+export function closeHttpServer(server) {
+  return new Promise((resolve) => {
+    server.close(resolve);
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+  });
+}
+
 export function spawnNodeForTest(t, args, options = {}) {
   const child = spawnNodeProcess(args, options);
   t.after(() => stopProcessTree(child));
