@@ -39,7 +39,7 @@
     "check:versions": "node scripts/check-workspace-versions.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:shell": "bash -n self-hosted-relay/install.sh && bash -n self-hosted-relay/uninstall.sh && bash -n self-hosted-relay/openrc/legax-relay",
-    "test:e2e": "node --test tests/e2e/legax-protocol.e2e.mjs tests/e2e/legax-cli.e2e.mjs tests/e2e/install-mode.e2e.mjs tests/e2e/relay.e2e.mjs tests/e2e/mcp-server.e2e.mjs tests/e2e/codex-app-server-link.e2e.mjs tests/e2e/codex-desktop-mirror.e2e.mjs tests/e2e/claude-code-link.e2e.mjs tests/e2e/claude-permission-mcp.e2e.mjs tests/e2e/gemini-cli-link.e2e.mjs tests/e2e/opencode-link.e2e.mjs tests/e2e/inbound-transports.e2e.mjs tests/e2e/runtime-state.e2e.mjs tests/e2e/daemon.e2e.mjs",
+    "test:e2e": "node --test --test-concurrency=1 tests/e2e/legax-protocol.e2e.mjs tests/e2e/legax-cli.e2e.mjs tests/e2e/install-mode.e2e.mjs tests/e2e/relay.e2e.mjs tests/e2e/mcp-server.e2e.mjs tests/e2e/codex-app-server-link.e2e.mjs tests/e2e/codex-desktop-mirror.e2e.mjs tests/e2e/claude-code-link.e2e.mjs tests/e2e/claude-permission-mcp.e2e.mjs tests/e2e/gemini-cli-link.e2e.mjs tests/e2e/opencode-link.e2e.mjs tests/e2e/inbound-transports.e2e.mjs tests/e2e/runtime-state.e2e.mjs tests/e2e/daemon.e2e.mjs",
     "test:pack": "node --test tests/e2e/install-mode.e2e.mjs tests/e2e/workspace-packages.e2e.mjs",
     "test:e2e:real": "node --test tests/e2e/real-clients.e2e.mjs",
     "test:real:messages": "node scripts/real-local-message-smoke.mjs",
