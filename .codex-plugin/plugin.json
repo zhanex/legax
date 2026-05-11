@@ -1,6 +1,6 @@
 {
   "name": "legax",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Relay agent messages, phone replies, and agent-mediated approval requests through self-hosted or third-party transports.",
   "author": {
     "name": "Legax Maintainers",

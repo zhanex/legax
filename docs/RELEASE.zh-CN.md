@@ -25,7 +25,7 @@
 6. 条件允许时创建签名或 annotated tag：
 
    ```bash
-   git tag -a v0.0.2 -m "v0.0.2"
+   git tag -a vX.Y.Z -m "vX.Y.Z"
    ```
 
 7. 根据 changelog 发布 release notes，并明确任何安全相关迁移步骤。
