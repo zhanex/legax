@@ -4,6 +4,14 @@ English | [Simplified Chinese](DOCUMENTATION.zh-CN.md)
 
 These rules apply to prose documentation, skill documentation, and commented example files in Legax.
 
+## Repository Shape
+
+- Keep the root README focused on what the project does, why it is useful, how to start, where to get help, and who maintains it.
+- Move long setup, architecture, adapter, plugin, and maintainer material into focused documents under `docs/`.
+- Keep `docs/README.md` as the documentation index so GitHub readers can navigate without scanning the whole tree.
+- Keep community health files under `.github/`: contributing guide, code of conduct, security policy, support guide, issue forms, and PR template.
+- Use relative links for repository-local files so links work in clones, branches, and forks.
+
 ## Language Files
 
 - English documentation uses `*.md`.

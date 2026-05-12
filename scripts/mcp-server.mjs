@@ -43,10 +43,80 @@ const DEFAULT_CONFIG = {
   ]
 };
 
+const dispatchResultSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    event: { type: "object", additionalProperties: true },
+    results: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    }
+  },
+  required: ["ok", "event", "results"],
+  additionalProperties: true
+};
+
+const pollResultSchema = {
+  type: "object",
+  properties: {
+    messages: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    },
+    errors: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    }
+  },
+  required: ["messages", "errors"],
+  additionalProperties: false
+};
+
+const permissionResultSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    requestId: { type: "string" },
+    permission: { type: "object", additionalProperties: true },
+    results: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    }
+  },
+  required: ["ok", "requestId", "results"],
+  additionalProperties: true
+};
+
+const statusResultSchema = {
+  type: "object",
+  properties: {
+    server: { type: "object", additionalProperties: true },
+    config: { type: "object", additionalProperties: true },
+    pendingPermissions: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    },
+    sentEventCount: { type: "number" },
+    receivedMessageCount: { type: "number" },
+    pings: {
+      type: "array",
+      items: { type: "object", additionalProperties: true }
+    }
+  },
+  required: ["server", "config", "pendingPermissions", "sentEventCount", "receivedMessageCount", "pings"],
+  additionalProperties: false
+};
+
 const TOOLS = [
   {
     name: "legax_send",
     description: "Send an agent message to the configured remote transport(s).",
+    annotations: {
+      readOnlyHint: false,
+      openWorldHint: true,
+      destructiveHint: false
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -67,11 +137,17 @@ const TOOLS = [
       },
       required: ["text"],
       additionalProperties: false
-    }
+    },
+    outputSchema: dispatchResultSchema
   },
   {
     name: "legax_poll",
     description: "Poll remote replies and permission decisions from bidirectional transports.",
+    annotations: {
+      readOnlyHint: false,
+      openWorldHint: false,
+      destructiveHint: false
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -89,11 +165,17 @@ const TOOLS = [
         }
       },
       additionalProperties: false
-    }
+    },
+    outputSchema: pollResultSchema
   },
   {
     name: "legax_request_permission",
     description: "Send a permission request to the phone and optionally wait for an approve/deny reply.",
+    annotations: {
+      readOnlyHint: false,
+      openWorldHint: true,
+      destructiveHint: false
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -120,11 +202,17 @@ const TOOLS = [
       },
       required: ["title", "body"],
       additionalProperties: false
-    }
+    },
+    outputSchema: permissionResultSchema
   },
   {
     name: "legax_status",
     description: "Show configured transports and pending permission requests, with secrets redacted.",
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      destructiveHint: false
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -135,7 +223,8 @@ const TOOLS = [
         }
       },
       additionalProperties: false
-    }
+    },
+    outputSchema: statusResultSchema
   }
 ];
 
@@ -722,6 +811,7 @@ async function handleRpc(message) {
     if (method === "tools/call") {
       const result = await callTool(params?.name, params?.arguments ?? {});
       sendResult(id, {
+        structuredContent: result,
         content: [
           {
             type: "text",

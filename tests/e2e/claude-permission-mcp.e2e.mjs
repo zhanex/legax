@@ -29,6 +29,15 @@ claude:
   const init = await rpc.call("initialize", {});
   assert.equal(init.serverInfo.name, "legax-claude-permissions");
 
+  const tools = await rpc.call("tools/list", {});
+  assert.deepEqual(tools.tools.map((tool) => tool.name), ["approval_prompt"]);
+  assert.deepEqual(tools.tools[0].annotations, {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false
+  });
+  assert.equal(tools.tools[0].outputSchema?.type, "object");
+
   const callPromise = rpc.call("tools/call", {
     name: "approval_prompt",
     arguments: {
@@ -64,6 +73,7 @@ claude:
   const result = await callPromise;
   const body = JSON.parse(result.content[0].text);
   assert.equal(body.behavior, "allow");
+  assert.equal(result.structuredContent.behavior, "allow");
 });
 
 test("Claude permission MCP respects approval switches from YAML", async (t) => {

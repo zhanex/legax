@@ -2,7 +2,15 @@
 
 [English](DOCUMENTATION.md) | 简体中文
 
-这些规则适用于 Legax 的正文文档、技能文档，以及带注释的示例文件。
+这些规则适用于 Legax 的正文文档、skill 文档，以及带注释的示例文件。
+
+## 仓库形态
+
+- 根目录 README 只聚焦项目做什么、为什么有用、如何开始、在哪里获得帮助，以及谁维护它。
+- 较长的安装、架构、适配器、插件和维护者材料放到 `docs/` 下的聚焦文档中。
+- 保持 `docs/README.md` 作为文档索引，让 GitHub 读者不必扫描整棵目录树。
+- 将 community health 文件放在 `.github/`：贡献指南、行为准则、安全策略、支持说明、issue 表单和 PR 模板。
+- 仓库内部文件使用相对链接，保证在 clone、branch 和 fork 中都能工作。
 
 ## 语言文件
 
@@ -21,11 +29,11 @@
 
 ## 安全
 
-- 不要把真实 bot token、API key、Relay secret、已配对设备 cookie、chat ID、会话密钥或用户凭据写入文档。
+- 不要把真实 bot token、API key、relay secret、已配对设备 cookie、chat ID、session secret 或用户凭据写入文档。
 - 示例统一使用 `replace-with-a-long-random-secret`、`YOUR_RELAY_HOST`、`TELEGRAM_BOT_TOKEN` 这类占位符。
 - 如果真实密钥已经出现在文档或示例中，应从文件中移除，并在仓库外完成轮换。
 
-## 审核清单
+## 审查清单
 
 - 英文和简体中文文件都存在。
 - 两份文件描述的是同一套行为，并使用相同的配置键。

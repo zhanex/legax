@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Legax plugin workflow">
+  <rect width="1280" height="720" fill="#F8FAFC"/>
+  <text x="72" y="92" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700">Legax Codex Plugin</text>
+  <text x="72" y="132" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="22">Relay agent messages, mobile replies, and approval requests through operator-owned transports.</text>
+  <rect x="90" y="238" width="260" height="168" rx="18" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
+  <text x="132" y="300" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">Codex</text>
+  <text x="132" y="340" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20">Agent session</text>
+  <rect x="510" y="238" width="260" height="168" rx="18" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+  <text x="552" y="300" fill="#1E3A8A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">Legax MCP</text>
+  <text x="552" y="340" fill="#1E40AF" font-family="Arial, Helvetica, sans-serif" font-size="20">Send, poll, request</text>
+  <rect x="930" y="238" width="260" height="168" rx="18" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
+  <text x="972" y="300" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">Phone</text>
+  <text x="972" y="340" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20">Relay, Telegram, webhook</text>
+  <path d="M370 322h118" stroke="#2563EB" stroke-width="8" stroke-linecap="round"/>
+  <path d="M486 322l-22-16v32l22-16Z" fill="#2563EB"/>
+  <path d="M790 322h118" stroke="#2563EB" stroke-width="8" stroke-linecap="round"/>
+  <path d="M906 322l-22-16v32l22-16Z" fill="#2563EB"/>
+  <path d="M930 432H350" stroke="#64748B" stroke-width="6" stroke-linecap="round" stroke-dasharray="14 16"/>
+  <path d="M352 432l22-16v32l-22-16Z" fill="#64748B"/>
+  <text x="420" y="492" fill="#334155" font-family="Arial, Helvetica, sans-serif" font-size="22">Approval decisions return through native agent callbacks.</text>
+  <rect x="72" y="576" width="1136" height="72" rx="16" fill="#E2E8F0"/>
+  <text x="108" y="622" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="24">Security boundary: Legax mirrors requests. It does not auto-approve or bypass host agent policy.</text>
+</svg>

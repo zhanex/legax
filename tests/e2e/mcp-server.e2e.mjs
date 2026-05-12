@@ -35,6 +35,34 @@ test("MCP bridge sends to relay and polls phone replies", async (t) => {
       "legax_status"
     ].sort()
   );
+  for (const tool of tools.tools) {
+    assert.deepEqual(
+      Object.keys(tool.annotations ?? {}).sort(),
+      ["destructiveHint", "openWorldHint", "readOnlyHint"].sort(),
+      `${tool.name} must declare all review annotations`
+    );
+    assert.equal(tool.outputSchema?.type, "object", `${tool.name} must declare an object outputSchema`);
+  }
+  assert.deepEqual(tools.tools.find((tool) => tool.name === "legax_send").annotations, {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false
+  });
+  assert.deepEqual(tools.tools.find((tool) => tool.name === "legax_poll").annotations, {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: false
+  });
+  assert.deepEqual(tools.tools.find((tool) => tool.name === "legax_request_permission").annotations, {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false
+  });
+  assert.deepEqual(tools.tools.find((tool) => tool.name === "legax_status").annotations, {
+    readOnlyHint: true,
+    openWorldHint: false,
+    destructiveHint: false
+  });
 
   assert.deepEqual(await rpc.call("resources/list", {}), { resources: [] });
   assert.deepEqual(await rpc.call("resources/templates/list", {}), { resourceTemplates: [] });
@@ -49,6 +77,8 @@ test("MCP bridge sends to relay and polls phone replies", async (t) => {
   });
   const sendBody = JSON.parse(sendResult.content[0].text);
   assert.equal(sendBody.ok, true);
+  assert.equal(sendResult.structuredContent.ok, true);
+  assert.equal(sendResult.structuredContent.event.text, "hello from mcp e2e");
 
   const phoneEvents = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
   assert.equal(phoneEvents.events.length, 1);
@@ -77,6 +107,8 @@ test("MCP bridge sends to relay and polls phone replies", async (t) => {
   const pollBody = JSON.parse(pollResult.content[0].text);
   assert.equal(pollBody.messages.length, 1);
   assert.equal(pollBody.messages[0].text, "reply from phone");
+  assert.equal(pollResult.structuredContent.messages.length, 1);
+  assert.equal(pollResult.structuredContent.messages[0].text, "reply from phone");
 });
 
 function createLineRpc(child) {
