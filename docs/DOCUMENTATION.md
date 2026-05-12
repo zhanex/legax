@@ -27,6 +27,11 @@ These rules apply to prose documentation, skill documentation, and commented exa
 - On Windows PowerShell 5.1, prefer Node.js, a modern editor, or `.NET` `UTF8Encoding(false)` when rewriting files.
 - Run `npm run check:docs` before submitting documentation changes.
 
+## Version References
+
+- Do not hard-code the current package version in README or docs prose. Use package metadata, `latest`, or placeholders such as `vX.Y.Z`.
+- Changelog headings may keep historical released versions because they are part of the release record.
+
 ## Security
 
 - Never put real bot tokens, API keys, relay secrets, paired-device cookies, chat IDs, session secrets, or user credentials in documentation.
@@ -42,3 +47,4 @@ These rules apply to prose documentation, skill documentation, and commented exa
 - Links between language versions work.
 - No mojibake or replacement characters are present.
 - No file starts with a UTF-8 BOM.
+- Current package versions appear only in changelog history.

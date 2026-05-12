@@ -27,6 +27,11 @@
 - 在 Windows PowerShell 5.1 中重写文件时，优先使用 Node.js、现代编辑器，或 `.NET` 的 `UTF8Encoding(false)`。
 - 提交文档变更前运行 `npm run check:docs`。
 
+## 版本引用
+
+- 不要在 README 或 docs 正文中写死当前 package 版本。使用 package metadata、`latest`，或 `vX.Y.Z` 这类占位符。
+- Changelog 标题可以保留已发布的历史版本，因为它们属于发布记录。
+
 ## 安全
 
 - 不要把真实 bot token、API key、relay secret、已配对设备 cookie、chat ID、session secret 或用户凭据写入文档。
@@ -42,3 +47,4 @@
 - 语言版本之间的互链可用。
 - 不存在乱码或替换字符。
 - 文件开头没有 UTF-8 BOM。
+- 当前 package 版本只出现在 changelog 历史记录中。
