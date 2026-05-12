@@ -13,22 +13,39 @@ import { pollInboundTransports } from "./lib/inbound-transports.mjs";
 import { dispatchAdditionalTransports } from "./lib/outbound-transports.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
+import { serverInfo } from "./lib/version.mjs";
 
 
-const SERVER_INFO = {
-  name: "legax-claude-permissions",
-  version: "0.0.3"
+const SERVER_INFO = serverInfo("legax-claude-permissions");
+
+const approvalOutputSchema = {
+  type: "object",
+  properties: {
+    behavior: {
+      type: "string",
+      enum: ["allow", "deny"]
+    },
+    message: { type: "string" }
+  },
+  required: ["behavior", "message"],
+  additionalProperties: false
 };
 
 const TOOLS = [
   {
     name: "approval_prompt",
     description: "Ask the phone to approve or deny a Claude Code permission request.",
+    annotations: {
+      readOnlyHint: false,
+      openWorldHint: true,
+      destructiveHint: false
+    },
     inputSchema: {
       type: "object",
       properties: {},
       additionalProperties: true
-    }
+    },
+    outputSchema: approvalOutputSchema
   }
 ];
 
@@ -251,7 +268,13 @@ async function handleRpc(message) {
     }
     if (method === "tools/call") {
       const result = await callTool(params?.name, params?.arguments ?? {});
-      sendRpc({ id, result: { content: [{ type: "text", text: JSON.stringify(result) }] } });
+      sendRpc({
+        id,
+        result: {
+          structuredContent: result,
+          content: [{ type: "text", text: JSON.stringify(result) }]
+        }
+      });
       return;
     }
     if (id !== undefined) sendRpc({ id, error: { code: -32601, message: `Method not found: ${method}` } });

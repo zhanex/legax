@@ -1,0 +1,20 @@
+{
+  "name": "legax",
+  "interface": {
+    "displayName": "Legax Plugins"
+  },
+  "plugins": [
+    {
+      "name": "legax",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
       - name: Run CI gate
         env:
@@ -28,10 +29,10 @@ jobs:
         run: npm run ci
 
       - name: Publish relay
-        run: npm publish --workspace @legax/relay
+        run: npm publish --workspace @legax/relay --access public --provenance
 
       - name: Publish daemon
-        run: npm publish --workspace @legax/daemon
+        run: npm publish --workspace @legax/daemon --access public --provenance
 
       - name: Publish CLI
-        run: npm publish --workspace legax
+        run: npm publish --workspace legax --access public --provenance

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fetchJson, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
@@ -28,6 +29,17 @@ claude:
 
   const init = await rpc.call("initialize", {});
   assert.equal(init.serverInfo.name, "legax-claude-permissions");
+  const rootPackage = JSON.parse(await fs.readFile(path.join(pluginRoot, "package.json"), "utf8"));
+  assert.equal(init.serverInfo.version, rootPackage.version);
+
+  const tools = await rpc.call("tools/list", {});
+  assert.deepEqual(tools.tools.map((tool) => tool.name), ["approval_prompt"]);
+  assert.deepEqual(tools.tools[0].annotations, {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false
+  });
+  assert.equal(tools.tools[0].outputSchema?.type, "object");
 
   const callPromise = rpc.call("tools/call", {
     name: "approval_prompt",
@@ -64,6 +76,7 @@ claude:
   const result = await callPromise;
   const body = JSON.parse(result.content[0].text);
   assert.equal(body.behavior, "allow");
+  assert.equal(result.structuredContent.behavior, "allow");
 });
 
 test("Claude permission MCP respects approval switches from YAML", async (t) => {

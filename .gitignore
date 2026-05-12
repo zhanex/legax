@@ -34,7 +34,10 @@ data/
 !.codex-plugin/
 !.codex-plugin/plugin.json
 .opencode/
-.agents/
+/.agents/*
+!/.agents/plugins/
+/.agents/plugins/*
+!/.agents/plugins/marketplace.json
 docs/superpowers/
 
 # === self-hosted-relay 安装/运行产物 ===

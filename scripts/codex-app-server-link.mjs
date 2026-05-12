@@ -23,6 +23,7 @@ import {
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { probeCodexFeatures, hintsForFeatures } from "./lib/codex-features.mjs";
+import { packageVersion } from "./lib/version.mjs";
 import {
   buildProjectChoices,
   filterActiveItems,
@@ -39,7 +40,7 @@ import {
 import { packageAssetPath, resolveConfigPath, resolveConfigRelative, resolveRuntimeFile } from "./lib/paths.mjs";
 
 
-const VERSION = "0.0.3";
+const VERSION = packageVersion();
 let activeConfigPath = resolveConfigPath();
 
 

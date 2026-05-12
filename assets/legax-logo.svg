@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="240" viewBox="0 0 720 240" role="img" aria-label="Legax logo">
+  <rect width="720" height="240" rx="28" fill="#0F172A"/>
+  <rect x="40" y="40" width="160" height="160" rx="36" fill="#2563EB"/>
+  <path d="M78 77h38v22H100v50h16v22H78V77Z" fill="#F8FAFC"/>
+  <path d="M126 77h26v72h32v22h-58V77Z" fill="#F8FAFC"/>
+  <path d="M82 184h96" stroke="#93C5FD" stroke-width="12" stroke-linecap="round"/>
+  <text x="236" y="126" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700">Legax</text>
+  <text x="238" y="164" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">Local-first agent relay</text>
+</svg>

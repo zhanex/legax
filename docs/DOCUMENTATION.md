@@ -4,6 +4,14 @@ English | [Simplified Chinese](DOCUMENTATION.zh-CN.md)
 
 These rules apply to prose documentation, skill documentation, and commented example files in Legax.
 
+## Repository Shape
+
+- Keep the root README focused on what the project does, why it is useful, how to start, where to get help, and who maintains it.
+- Move long setup, architecture, adapter, plugin, and maintainer material into focused documents under `docs/`.
+- Keep `docs/README.md` as the documentation index so GitHub readers can navigate without scanning the whole tree.
+- Keep community health files under `.github/`: contributing guide, code of conduct, security policy, support guide, issue forms, and PR template.
+- Use relative links for repository-local files so links work in clones, branches, and forks.
+
 ## Language Files
 
 - English documentation uses `*.md`.
@@ -18,6 +26,11 @@ These rules apply to prose documentation, skill documentation, and commented exa
 - Avoid editor or shell commands that silently rewrite UTF-8 as a local code page.
 - On Windows PowerShell 5.1, prefer Node.js, a modern editor, or `.NET` `UTF8Encoding(false)` when rewriting files.
 - Run `npm run check:docs` before submitting documentation changes.
+
+## Version References
+
+- Do not hard-code the current package version in README or docs prose. Use package metadata, `latest`, or placeholders such as `vX.Y.Z`.
+- Changelog headings may keep historical released versions because they are part of the release record.
 
 ## Security
 
@@ -34,3 +47,4 @@ These rules apply to prose documentation, skill documentation, and commented exa
 - Links between language versions work.
 - No mojibake or replacement characters are present.
 - No file starts with a UTF-8 BOM.
+- Current package versions appear only in changelog history.

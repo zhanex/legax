@@ -89,6 +89,18 @@ Run a full diagnostic after the relay is reachable:
 legax doctor
 ```
 
+## Optional Codex Plugin
+
+Install the Codex plugin when you want Codex to have the Legax skill and MCP tools available from the plugin directory. The plugin does not start the daemon or create operator config; keep the CLI setup above as the runtime path.
+
+From a local checkout:
+
+```bash
+codex plugin marketplace add .
+```
+
+Then restart Codex, choose the `Legax Plugins` marketplace, and install `Legax`. See [Codex Plugin Guide](CODEX_PLUGIN.md) for release-candidate and Git-backed install notes.
+
 ## Split Relay and Daemon Setup
 
 Use this layout when the phone needs a stable public relay URL while the agent CLIs run on a private development machine.

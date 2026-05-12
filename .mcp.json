@@ -5,10 +5,7 @@
       "args": [
         "./scripts/mcp-server.mjs"
       ],
-      "env": {
-        "LEGAX_CONFIG": "./config.yaml"
-      },
-      "note": "Local stdio MCP server that relays Legax messages and agent-mediated approval requests to configured transports."
+      "note": "Local stdio MCP server that relays Legax messages and agent-mediated approval requests to configured transports. It uses the default Legax config path unless LEGAX_CONFIG is set by the operator."
     }
   }
 }

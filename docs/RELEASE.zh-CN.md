@@ -40,7 +40,7 @@
    npm view @legax/relay name version --json
    ```
 
-   返回 404 说明名称当前未被占用。如果任一名称返回了不属于本项目的包，请先把对应 package 切换到 scoped package。
+   返回 404 说明名称当前未被占用。如果任一名称返回了不属于本项目的包，请先把对应 package 切换为 scoped package。
 
 2. 运行本地发布门禁：
 
@@ -49,11 +49,15 @@
    npm run release:dry-run
    ```
 
-3. 首次 trusted publish 前，需要在 npm 上为这个 GitHub 仓库和 workflow 路径 `.github/workflows/publish-npm.yml` 配置 Trusted Publisher。维护者账号必须开启 2FA。
+3. 为每个公开 npm 包配置 trusted publishing：`legax`、`@legax/daemon` 和 `@legax/relay`。GitHub organization/user 填 `zhanex`，repository 填 `legax`，workflow filename 填 `publish-npm.yml`。
 
-4. 创建 GitHub Release 后，发布 workflow 会依次发布 `@legax/relay`、`@legax/daemon`、`legax`，并通过 OIDC trusted publishing 发布到 npm，不需要配置 `NPM_TOKEN` secret。
+   npm 要求填写 workflow 文件名本身，不是完整的 `.github/workflows/publish-npm.yml` 路径。维护者账号应开启 2FA。
 
-5. 从公开 registry 验证安装：
+4. 创建 GitHub Release 后，发布 workflow 会依次发布 `@legax/relay`、`@legax/daemon` 和 `legax`，并通过 OIDC trusted publishing 发布到 npm，不需要配置 `NPM_TOKEN` secret。
+
+5. 如果 release workflow 在 `npm publish` 阶段返回 `E404`，应按失败步骤中的包名排查 npm 授权或 trusted publisher 配置。重新运行失败 workflow 前，检查 package 写入权限、该 package 的 trusted publisher，以及 workflow 文件名是否完全匹配。
+
+6. 从公开 registry 验证安装：
 
    ```bash
    npm install -g legax
@@ -64,4 +68,4 @@
 
 ## 发布产物
 
-默认发布产物是 GitHub Release 和三个同版本 npm package：`legax`、`@legax/daemon`、`@legax/relay`。独立 relay 仍保留在 `self-hosted-relay/`，供希望复制文件或安装系统服务的运维者使用。
+默认发布产物是 GitHub Release 和三个同版本 npm package：`legax`、`@legax/daemon`、`@legax/relay`。独立 relay 仍保留在 `self-hosted-relay/`，供希望复制文件或安装系统服务的运维人员使用。

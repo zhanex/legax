@@ -89,6 +89,18 @@ relay 可访问后运行完整诊断：
 legax doctor
 ```
 
+## 可选 Codex 插件
+
+当你希望 Codex 从插件目录获得 Legax skill 和 MCP 工具时，安装 Codex 插件。插件不会启动 daemon，也不会创建操作者配置；上面的 CLI 设置仍然是运行时路径。
+
+在本地 checkout 中运行：
+
+```bash
+codex plugin marketplace add .
+```
+
+然后重启 Codex，选择 `Legax Plugins` marketplace，并安装 `Legax`。发布候选和 Git-backed 安装说明见 [Codex 插件指南](CODEX_PLUGIN.zh-CN.md)。
+
 ## Relay 与 Daemon 分离部署
 
 当手机需要稳定公网 relay，而 agent CLI 运行在私有开发机时，使用这种部署。

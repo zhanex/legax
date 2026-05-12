@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Legax icon">
+  <rect width="256" height="256" rx="56" fill="#2563EB"/>
+  <path d="M70 74h42v24H94v60h18v24H70V74Z" fill="#F8FAFC"/>
+  <path d="M123 74h28v84h35v24h-63V74Z" fill="#F8FAFC"/>
+  <path d="M75 196h106" stroke="#93C5FD" stroke-width="14" stroke-linecap="round"/>
+</svg>

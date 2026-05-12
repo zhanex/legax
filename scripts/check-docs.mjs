@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
+const rootPackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const currentPackageVersion = rootPackage.version;
 
 const excludedDirs = new Set([
   ".agents",
@@ -21,6 +23,10 @@ const secretPatterns = [
 ];
 
 const errors = [];
+
+function isChangelog(relPath) {
+  return relPath === "CHANGELOG.md" || relPath === "CHANGELOG.zh-CN.md";
+}
 
 function relative(filePath) {
   return path.relative(root, filePath).replaceAll(path.sep, "/");
@@ -78,6 +84,10 @@ for (const filePath of scannedFiles) {
     if (pattern.test(text)) {
       errors.push(`${relPath} appears to contain a real ${name}`);
     }
+  }
+
+  if (currentPackageVersion && relPath.endsWith(".md") && !isChangelog(relPath) && text.includes(currentPackageVersion)) {
+    errors.push(`${relPath} must not hard-code current package version ${currentPackageVersion}; read it from package metadata or use a placeholder`);
   }
 
   const isChineseFile = relPath.includes(".zh-CN.");
