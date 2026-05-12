@@ -6,6 +6,10 @@ Legax 是一个 local-first 的远程交互层，服务于编码 Agent 和开发
 
 名称 `Legax` 来自 `Local-first Embedded Gateway for Agent eXchange`。Legax 不是托管 IDE、终端替代品或编程客户端。真实编码流程仍然留在 Codex、Claude Code、Gemini CLI、OpenCode、编辑器、终端和 Git 托管平台中。
 
+项目保持 Agent 中立。Codex、Claude Code、Gemini CLI 和 OpenCode 是当前的首批适配器，但内部模型可以继续扩展到更多 CLI 和运行时。
+
+![Legax 项目概览](docs/image/legax-overview.png)
+
 ## 功能
 
 - 将 Agent 状态、完成摘要和审批请求发送到手机。

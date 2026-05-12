@@ -4,7 +4,9 @@ English | [Simplified Chinese](README.zh-CN.md)
 
 Legax is a local-first remote interaction layer for coding agents and developer assistants. It lets a desktop agent send important events to a phone, receive phone replies, and resolve approval or user-input requests through self-hosted or third-party transports.
 
-The name expands to `Local-first Embedded Gateway for Agent eXchange`. Legax is not a hosted IDE, terminal replacement, or programming client. It keeps the coding workflow in Codex, Claude Code, Gemini CLI, OpenCode, your editor, your terminal, and your Git hosting platform.
+The project is agent-neutral. Codex, Claude Code, Gemini CLI, and OpenCode are first-class adapters, but the internal model is designed for more CLIs and runtimes.
+
+![Legax overview](docs/image/legax-overview.png)
 
 ## What It Does
 
