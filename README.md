@@ -1,37 +1,107 @@
-# Legax
+<div align="center">
 
-English | [Simplified Chinese](README.zh-CN.md)
+<h1>Legax: Universal Remote Control & Relay for AI Coding Agents</h1>
 
-Legax is a local-first remote interaction layer for coding agents and developer assistants. It lets a desktop agent send important events to a phone, receive phone replies, and resolve approval or user-input requests through self-hosted or third-party transports.
+<p>
+  English | <a href="README.zh-CN.md">Simplified Chinese</a>
+</p>
 
-The project is agent-neutral. Codex, Claude Code, Gemini CLI, and OpenCode are first-class adapters, but the internal model is designed for more CLIs and runtimes.
+<p><strong>Control Codex, Claude Code, Gemini CLI, and OpenCode from your phone or any device.</strong></p>
 
-![Legax overview](docs/image/legax-overview.png)
+<p>
+  Legax is a local-first remote control layer for AI coding agents. It forwards important agent events to your phone, routes replies back to the selected CLI/project/session, and returns supported approval decisions through each agent's native callback path.
+</p>
 
-## What It Does
+<p>
+  <a href="https://www.npmjs.com/package/legax"><img alt="npm package" src="https://img.shields.io/npm/v/legax?label=legax"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/zhanex/legax"></a>
+  <a href="https://codespaces.new/zhanex/legax"><img alt="Open in GitHub Codespaces" src="https://github.com/codespaces/badge.svg"></a>
+</p>
 
-- Sends agent status, completion summaries, and approval requests to a phone.
-- Accepts phone replies and routes them to the selected agent.
-- Runs Codex, Claude Code, Gemini CLI, and OpenCode adapters in one local daemon.
-- Provides a Codex plugin bundle with a skill and MCP tools for phone relay workflows.
-- Supports a self-hosted relay, Telegram Bot API, and outbound webhooks.
-- Keeps secrets in local YAML config files, not in tracked examples or environment fallbacks.
+<p>
+  <img alt="Legax overview" src="docs/image/legax-overview.png" width="820">
+</p>
 
-## Quick Start
+</div>
 
-Most users should install the all-in-one CLI package:
+## Try It In 30 Seconds
+
+Use `npx` when you just want to create a config and verify the local runtime:
+
+```bash
+npx legax@latest init
+npx legax@latest doctor --offline
+```
+
+For a local phone pairing demo, keep the relay and daemon in separate terminals:
+
+```bash
+# Terminal 1
+npx legax@latest relay start
+```
+
+```bash
+# Terminal 2
+npx legax@latest daemon start:bg
+npx legax@latest daemon pair
+```
+
+Open the printed pair URL from your phone, or scan the QR code. For a real phone outside the same machine or LAN, the relay must be reachable from the phone; see the [User Manual](docs/USER_MANUAL.md) for the split relay setup.
+
+## Why Developers Want It
+
+Coding agents often need attention after you leave the desk: a permission prompt, a clarification, a finished run, or a session you want to continue from another room. Legax keeps that loop on infrastructure you control.
+
+| Problem | Legax path |
+| --- | --- |
+| You miss approval prompts while away from the computer. | Forward supported native approvals to your phone and return the decision through the agent callback. |
+| You need to continue a local session remotely. | Route phone replies to the selected CLI, project, and session. |
+| You want phone access without exposing terminal control. | Use relay pairing, Telegram buttons, and adapter APIs instead of UI scraping. |
+| Your team uses multiple agent CLIs. | Run Codex, Claude Code, Gemini CLI, and OpenCode adapters under one daemon. |
+
+## Feature Matrix
+
+| Feature | Codex CLI | Claude Code CLI | Gemini CLI | Legax |
+| --- | --- | --- | --- | --- |
+| Phone or browser remote control | Limited to native surfaces | No general phone relay | No general phone relay | Web UI, Telegram, webhook |
+| Multi-agent routing | No | No | No | Codex, Claude Code, Gemini CLI, OpenCode |
+| Self-hosted relay | No | No | No | Yes |
+| Cross-device session selection | No | No | No | CLI, project/chat, and session menus |
+| Native approval mirroring | Codex only | Claude only | Gemini only | Supported native paths across adapters |
+| MCP tools for agent workflows | Host-specific | Host-specific | Host-specific | Generic Legax MCP server |
+
+OpenCode text routing works through `opencode serve`; OpenCode-native permission callback bridging is not implemented yet.
+
+## How It Works
+
+```mermaid
+graph LR
+  A["Agent CLI: Codex / Claude / Gemini / OpenCode"] <--> B["Legax Daemon"]
+  B <--> C{"Self-hosted Relay / Telegram"}
+  C <--> D["Phone: Web UI / Telegram"]
+  B <--> E["Legax MCP Tools"]
+```
+
+The daemon owns process supervision, inbound routing, session selection, and on-demand launches. Adapters own each CLI's lifecycle and session model. MCP tools are capabilities for agents, not lifecycle managers.
+
+## Install For Daily Use
+
+Install the all-in-one CLI on the machine that runs your coding agents:
 
 ```bash
 npm install -g legax
 legax init
 legax doctor --offline
 legax relay start
-legax daemon start
+legax daemon start:bg
+legax daemon pair
 ```
 
-`legax init` writes `config.yaml` under the Legax home directory by default. Set `LEGAX_HOME` to choose a different operator-owned directory, or pass `--config <path>` for a single command.
+`legax init` writes `config.yaml` under the Legax home directory by default. Set `LEGAX_HOME` to choose another operator-owned directory, or pass `--config <path>` for a single command.
 
-For a step-by-step setup, read the [User Manual](docs/USER_MANUAL.md). For AI-assisted setup, copy this prompt into your coding agent:
+## Let An AI Install It
+
+Copy this prompt into your coding agent:
 
 ```text
 Install and configure Legax for me.
@@ -43,6 +113,51 @@ Use the AI-facing install guide as your execution checklist:
 Follow the guide exactly. Do not print secrets or commit local config/runtime files. Ask me before creating DNS records, exposing ports, rotating secrets, changing npm auth, or selecting a Telegram chat. Finish by running the validation commands from the guide and summarize the config paths, enabled transports, enabled agent CLIs, and any remaining manual steps.
 ```
 
+## What Ships Today
+
+| Area | Current support |
+| --- | --- |
+| Agent adapters | Codex, Claude Code, Gemini CLI, OpenCode |
+| Phone transports | Self-hosted relay web UI, Telegram Bot API, outbound webhook notifications |
+| Native approvals | Codex JSON-RPC, Claude permission-prompt MCP, Gemini CLI approval mode |
+| Session routing | CLI, project/chat, and session selection from relay and Telegram menus |
+| Codex plugin | Installable plugin bundle with Legax skill and MCP tools |
+| Runtime state | Local JSON state for adapter cursors, selected sessions, inbox queues, and launch requests |
+
+## Developer Experience
+
+| Need | Start here |
+| --- | --- |
+| Minimal config | [examples/config.example.minimal.yaml](examples/config.example.minimal.yaml) |
+| Example walkthrough | [examples/README.md](examples/README.md) |
+| Full setup guide | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) |
+| AI/LLM repository context | [docs/context_for_llms.md](docs/context_for_llms.md) |
+| Codespaces | [Open this repo in Codespaces](https://codespaces.new/zhanex/legax) |
+
+This is a dependency-free Node.js project. Everything runs against the Node 18+ standard library.
+
+## Common Commands
+
+| Command | Purpose |
+| --- | --- |
+| `legax init` | Create an operator config with generated local secrets. |
+| `legax doctor --offline` | Validate local config and enabled CLI commands without relay network checks. |
+| `legax relay start` | Start the development relay. |
+| `legax daemon start` | Start the unified daemon and enabled adapters in the foreground. |
+| `legax daemon start:bg` | Start the daemon in the background for local demos and pairing. |
+| `legax daemon pair` | Print a short-lived phone pairing URL and QR payload. |
+| `legax doctor` | Run full diagnostics after the relay is reachable. |
+
+## Deployment Choices
+
+| Deployment | Use it when |
+| --- | --- |
+| Local all-in-one | You are trying Legax on one machine, or the phone can reach the relay URL you configured. |
+| Split relay and daemon | A public VPS, NAS, or server hosts the relay while agent CLIs stay on a private development machine. |
+| Telegram-first | You prefer Telegram messages and buttons over the browser relay UI. |
+
+The project does not operate a hosted backend, shared relay, or shared Telegram bot. You choose where data goes by configuring the transports.
+
 ## Codex Plugin
 
 This repository is also structured as an installable Codex plugin:
@@ -52,11 +167,20 @@ This repository is also structured as an installable Codex plugin:
 - [`skills/legax/SKILL.md`](skills/legax/SKILL.md) tells Codex when and how to use the phone relay tools.
 - [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) exposes the root plugin through a repo marketplace for local or team testing.
 
-See [Codex Plugin Guide](docs/CODEX_PLUGIN.md) for install commands, release-candidate checks, and the current official Plugin Directory status.
+See the [Codex Plugin Guide](docs/CODEX_PLUGIN.md) for install commands, release-candidate checks, and the current official Plugin Directory status.
+
+## Security Model
+
+Legax handles sensitive local agent context, approval requests, paths, and sometimes command output.
+
+- Secrets stay in local YAML config files, not tracked examples or environment fallbacks.
+- Browser access uses short-lived pairing codes and paired-device cookies, not URL tokens.
+- Approval decisions are returned through supported native callbacks.
+- Legax must not simulate UI clicks, auto-approve prompts, or bypass an agent's security policy.
+
+Read the [Privacy Notice](docs/PRIVACY.md), [Security Policy](.github/SECURITY.md), and [Functional Boundaries](docs/FUNCTIONAL_BOUNDARIES.md) before exposing a relay publicly.
 
 ## Documentation
-
-Start with [Documentation Index](docs/README.md).
 
 | Need | Read |
 | --- | --- |
@@ -69,18 +193,7 @@ Start with [Documentation Index](docs/README.md).
 | Extend the project | [Extending Legax](docs/EXTENDING.md) |
 | Release packages | [Release Guide](docs/RELEASE.md) |
 
-## Security and Privacy
-
-Legax handles sensitive local agent context, approval requests, paths, and sometimes command output. The project does not operate a hosted backend, shared relay, or shared Telegram bot.
-
-- Read the [Privacy Notice](docs/PRIVACY.md) for data handling.
-- Read the [Security Policy](.github/SECURITY.md) for the threat model and vulnerability reporting.
-- Never commit `config.yaml`, runtime `data/`, logs, local package tarballs, or generated machine config.
-- Legax mirrors native approval prompts. It must not simulate UI clicks, auto-approve prompts, or bypass an agent's security policy.
-
 ## Development
-
-This is a dependency-free Node.js project. Everything runs against the Node 18+ standard library.
 
 ```bash
 npm run ci
@@ -88,7 +201,7 @@ npm run ci
 
 `npm run ci` is the full merge gate. For targeted work, run the narrow regression tests first, then the relevant broader gate.
 
-Common commands:
+Common checks:
 
 ```bash
 npm test

@@ -20,6 +20,7 @@
 | [架构](ARCHITECTURE.zh-CN.md) | 控制面、能力面、通信面、daemon、runtime state 和适配器设计。 |
 | [功能边界](FUNCTIONAL_BOUNDARIES.zh-CN.md) | Legax 负责什么、刻意不负责什么，以及非目标。 |
 | [Legax 协议](LEGAX_PROTOCOL.zh-CN.md) | 跨适配器事件契约和 relay 消息形状。 |
+| [LLM 上下文](context_for_llms.zh-CN.md) | 供编码 Agent 修改仓库时使用的仓库地图与安全规则。 |
 | [扩展 Legax](EXTENDING.zh-CN.md) | 添加适配器、传输、配置字段和测试。 |
 
 ## 维护者文档

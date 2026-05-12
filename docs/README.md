@@ -20,6 +20,7 @@ Use this index to choose the shortest document for the job. The root README stay
 | [Architecture](ARCHITECTURE.md) | Control, capability, communication, daemon, runtime-state, and adapter design. |
 | [Functional Boundaries](FUNCTIONAL_BOUNDARIES.md) | What Legax owns, what it intentionally does not own, and non-goals. |
 | [Legax Protocol](LEGAX_PROTOCOL.md) | Cross-adapter event contracts and relay message shapes. |
+| [Context For LLMs](context_for_llms.md) | Repository map and safety rules for coding agents making changes. |
 | [Extending Legax](EXTENDING.md) | Adding adapters, transports, config fields, and tests. |
 
 ## Maintainer Docs
