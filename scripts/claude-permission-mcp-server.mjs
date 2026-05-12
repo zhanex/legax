@@ -13,12 +13,10 @@ import { pollInboundTransports } from "./lib/inbound-transports.mjs";
 import { dispatchAdditionalTransports } from "./lib/outbound-transports.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
+import { serverInfo } from "./lib/version.mjs";
 
 
-const SERVER_INFO = {
-  name: "legax-claude-permissions",
-  version: "0.0.3"
-};
+const SERVER_INFO = serverInfo("legax-claude-permissions");
 
 const approvalOutputSchema = {
   type: "object",

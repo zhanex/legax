@@ -5,12 +5,10 @@ import crypto from "node:crypto";
 import { buildTelegramMessagePayloads } from "./lib/outbound-transports.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
+import { serverInfo } from "./lib/version.mjs";
 
 
-const SERVER_INFO = {
-  name: "legax",
-  version: "0.0.3"
-};
+const SERVER_INFO = serverInfo("legax");
 
 const DEFAULT_CONFIG = {
   sessionId: "default",

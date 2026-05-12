@@ -49,11 +49,15 @@ This repository is source-first. Public releases should be cut only after the re
    npm run release:dry-run
    ```
 
-3. Before the first trusted publish, configure npm trusted publishing for this GitHub repository and workflow path `.github/workflows/publish-npm.yml`. Keep maintainer accounts protected with 2FA.
+3. Configure npm trusted publishing for each public npm package: `legax`, `@legax/daemon`, and `@legax/relay`. Use GitHub organization/user `zhanex`, repository `legax`, and workflow filename `publish-npm.yml`.
+
+   npm asks for the workflow filename only, not the full `.github/workflows/publish-npm.yml` path. Keep maintainer accounts protected with 2FA.
 
 4. Publish by creating a GitHub Release. The release workflow publishes `@legax/relay`, `@legax/daemon`, and `legax` in that order through OIDC trusted publishing and does not require an `NPM_TOKEN` secret.
 
-5. Verify install from the public registry:
+5. If the release workflow fails with `E404` on `npm publish`, treat it as an npm authorization or trusted-publisher mismatch for the package named in the failing step. Recheck package write access, the package-specific trusted publisher, and the exact workflow filename before rerunning the failed workflow.
+
+6. Verify install from the public registry:
 
    ```bash
    npm install -g legax

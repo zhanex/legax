@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fetchJson, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
@@ -24,6 +26,8 @@ test("MCP bridge sends to relay and polls phone replies", async (t) => {
     clientInfo: { name: "e2e", version: "0.0.2" }
   });
   assert.equal(initialize.serverInfo.name, "legax");
+  const rootPackage = JSON.parse(await fs.readFile(path.join(pluginRoot, "package.json"), "utf8"));
+  assert.equal(initialize.serverInfo.version, rootPackage.version);
 
   const tools = await rpc.call("tools/list", {});
   assert.deepEqual(

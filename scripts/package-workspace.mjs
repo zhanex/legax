@@ -16,6 +16,7 @@ const LIB_FILES = [
   "paths.mjs",
   "project-browser.mjs",
   "runtime-state.mjs",
+  "version.mjs",
   "worktree-lite.mjs",
   "yaml.mjs"
 ];

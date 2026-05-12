@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fetchJson, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
@@ -28,6 +29,8 @@ claude:
 
   const init = await rpc.call("initialize", {});
   assert.equal(init.serverInfo.name, "legax-claude-permissions");
+  const rootPackage = JSON.parse(await fs.readFile(path.join(pluginRoot, "package.json"), "utf8"));
+  assert.equal(init.serverInfo.version, rootPackage.version);
 
   const tools = await rpc.call("tools/list", {});
   assert.deepEqual(tools.tools.map((tool) => tool.name), ["approval_prompt"]);
