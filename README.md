@@ -130,6 +130,9 @@ Follow the guide exactly. Do not print secrets or commit local config/runtime fi
 | --- | --- |
 | Minimal config | [examples/config.example.minimal.yaml](examples/config.example.minimal.yaml) |
 | Example walkthrough | [examples/README.md](examples/README.md) |
+| Claude Code integration review | [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) |
+| Claude Code example | [examples/claude-code/README.md](examples/claude-code/README.md) |
+| Adapter conformance checklist | [docs/ADAPTER_CONFORMANCE.md](docs/ADAPTER_CONFORMANCE.md) |
 | Full setup guide | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) |
 | AI/LLM repository context | [docs/context_for_llms.md](docs/context_for_llms.md) |
 | Codespaces | [Open this repo in Codespaces](https://codespaces.new/zhanex/legax) |
@@ -187,9 +190,11 @@ Read the [Privacy Notice](docs/PRIVACY.md), [Security Policy](.github/SECURITY.m
 | Install and operate Legax | [User Manual](docs/USER_MANUAL.md) |
 | Ask an agent to install Legax | [AI Install Guide](docs/AI_INSTALL.md) |
 | Understand adapter behavior | [Adapter Guide](docs/ADAPTERS.md) |
+| Review the Claude Code integration | [Claude Code Integration](docs/CLAUDE_CODE_INTEGRATION.md) |
 | Install or review the Codex plugin | [Codex Plugin Guide](docs/CODEX_PLUGIN.md) |
 | Understand architecture | [Architecture](docs/ARCHITECTURE.md) |
 | Understand product boundaries | [Functional Boundaries](docs/FUNCTIONAL_BOUNDARIES.md) |
+| Review adapter requirements | [Adapter Conformance](docs/ADAPTER_CONFORMANCE.md) |
 | Extend the project | [Extending Legax](docs/EXTENDING.md) |
 | Release packages | [Release Guide](docs/RELEASE.md) |
 

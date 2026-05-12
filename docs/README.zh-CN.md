@@ -12,6 +12,7 @@
 | [AI 安装指南](AI_INSTALL.zh-CN.md) | 让 Agent 或自动化助手替人类操作者安装 Legax。 |
 | [Codex 插件指南](CODEX_PLUGIN.zh-CN.md) | 安装 Codex 插件、审查发布候选元数据，以及理解 Plugin Directory 准备状态。 |
 | [适配器指南](ADAPTERS.zh-CN.md) | Codex、Claude Code、Gemini CLI、OpenCode、desktop mirror、运行模式和审批边界。 |
+| [Claude Code 集成](CLAUDE_CODE_INTEGRATION.zh-CN.md) | Claude Code adapter、permission-prompt MCP 流程、安全边界和生态审查问题。 |
 
 ## 设计与扩展文档
 
@@ -21,6 +22,7 @@
 | [功能边界](FUNCTIONAL_BOUNDARIES.zh-CN.md) | Legax 负责什么、刻意不负责什么，以及非目标。 |
 | [Legax 协议](LEGAX_PROTOCOL.zh-CN.md) | 跨适配器事件契约和 relay 消息形状。 |
 | [LLM 上下文](context_for_llms.zh-CN.md) | 供编码 Agent 修改仓库时使用的仓库地图与安全规则。 |
+| [Adapter 一致性要求](ADAPTER_CONFORMANCE.zh-CN.md) | 路由、会话、审批、重启行为和测试方面的共享 adapter 要求。 |
 | [扩展 Legax](EXTENDING.zh-CN.md) | 添加适配器、传输、配置字段和测试。 |
 
 ## 维护者文档

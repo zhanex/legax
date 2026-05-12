@@ -12,6 +12,7 @@ Use this index to choose the shortest document for the job. The root README stay
 | [AI Install Guide](AI_INSTALL.md) | An agent or automation assistant installing Legax for a human operator. |
 | [Codex Plugin Guide](CODEX_PLUGIN.md) | Installing the Codex plugin, reviewing release-candidate metadata, and understanding Plugin Directory readiness. |
 | [Adapter Guide](ADAPTERS.md) | Codex, Claude Code, Gemini CLI, OpenCode, desktop mirror, runtime modes, and approval boundaries. |
+| [Claude Code Integration](CLAUDE_CODE_INTEGRATION.md) | Claude Code adapter, permission-prompt MCP flow, safety boundaries, and ecosystem review questions. |
 
 ## Design and Extension Docs
 
@@ -21,6 +22,7 @@ Use this index to choose the shortest document for the job. The root README stay
 | [Functional Boundaries](FUNCTIONAL_BOUNDARIES.md) | What Legax owns, what it intentionally does not own, and non-goals. |
 | [Legax Protocol](LEGAX_PROTOCOL.md) | Cross-adapter event contracts and relay message shapes. |
 | [Context For LLMs](context_for_llms.md) | Repository map and safety rules for coding agents making changes. |
+| [Adapter Conformance](ADAPTER_CONFORMANCE.md) | Shared adapter requirements for routing, sessions, approvals, restart behavior, and tests. |
 | [Extending Legax](EXTENDING.md) | Adding adapters, transports, config fields, and tests. |
 
 ## Maintainer Docs
