@@ -8,6 +8,8 @@ Legax is a local-first remote interaction layer for coding agents and developer 
 
 The project is agent-neutral. Codex, Claude Code, Gemini CLI, and OpenCode are first-class adapters, but the internal model is designed for more CLIs and runtimes.
 
+![Legax overview](docs/image/legax-overview.png)
+
 ## Architecture
 
 The project uses a CLI + MCP model:
