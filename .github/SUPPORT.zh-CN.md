@@ -13,9 +13,9 @@
 
 - 运行过的命令。
 - 预期行为和实际行为。
-- 相关 adapter：Codex、Claude Code、Gemini CLI、relay、Telegram、webhook 或 MCP。
-- 已脱敏的日志或 payload。移除 bot token、relay 密钥、webhook URL、chat ID，以及不应公开的本地会话内容。
+- 相关 adapter：Codex、Claude Code、Gemini CLI、relay、Telegram、飞书/Lark、webhook 或 MCP。
+- 已脱敏的日志或 payload。移除 bot token、飞书/Lark 应用凭据、relay 密钥、webhook URL、chat ID，以及不应公开的本地会话内容。
 
 ## 支持范围
 
-维护者支持 Legax 本身。上游 Agent CLI bug、Telegram 故障、反向代理配置和操作系统服务管理器问题，可能需要上游或平台侧支持。
+维护者支持 Legax 本身。上游 Agent CLI bug、Telegram 或飞书/Lark 故障、反向代理配置和操作系统服务管理器问题，可能需要上游或平台侧支持。

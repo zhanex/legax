@@ -56,14 +56,14 @@ Coding agents often need attention after you leave the desk: a permission prompt
 | --- | --- |
 | You miss approval prompts while away from the computer. | Forward supported native approvals to your phone and return the decision through the agent callback. |
 | You need to continue a local session remotely. | Route phone replies to the selected CLI, project, and session. |
-| You want phone access without exposing terminal control. | Use relay pairing, Telegram buttons, and adapter APIs instead of UI scraping. |
+| You want phone access without exposing terminal control. | Use relay pairing, Telegram/Feishu buttons, and adapter APIs instead of UI scraping. |
 | Your team uses multiple agent CLIs. | Run Codex, Claude Code, Gemini CLI, and OpenCode adapters under one daemon. |
 
 ## Feature Matrix
 
 | Feature | Codex CLI | Claude Code CLI | Gemini CLI | Legax |
 | --- | --- | --- | --- | --- |
-| Phone or browser remote control | Limited to native surfaces | No general phone relay | No general phone relay | Web UI, Telegram, webhook |
+| Phone or browser remote control | Limited to native surfaces | No general phone relay | No general phone relay | Web UI, Telegram, Feishu/Lark, webhook |
 | Multi-agent routing | No | No | No | Codex, Claude Code, Gemini CLI, OpenCode |
 | Self-hosted relay | No | No | No | Yes |
 | Cross-device session selection | No | No | No | CLI, project/chat, and session menus |
@@ -77,8 +77,8 @@ OpenCode text routing works through `opencode serve`; OpenCode-native permission
 ```mermaid
 graph LR
   A["Agent CLI: Codex / Claude / Gemini / OpenCode"] <--> B["Legax Daemon"]
-  B <--> C{"Self-hosted Relay / Telegram"}
-  C <--> D["Phone: Web UI / Telegram"]
+  B <--> C{"Self-hosted Relay / Telegram / Feishu"}
+  C <--> D["Phone: Web UI / Telegram / Feishu"]
   B <--> E["Legax MCP Tools"]
 ```
 
@@ -110,7 +110,7 @@ Use the AI-facing install guide as your execution checklist:
 - If you are working in a local Legax checkout, read docs/AI_INSTALL.md.
 - Otherwise, read https://github.com/zhanex/legax/blob/main/docs/AI_INSTALL.md.
 
-Follow the guide exactly. Do not print secrets or commit local config/runtime files. Ask me before creating DNS records, exposing ports, rotating secrets, changing npm auth, or selecting a Telegram chat. Finish by running the validation commands from the guide and summarize the config paths, enabled transports, enabled agent CLIs, and any remaining manual steps.
+Follow the guide exactly. Do not print secrets or commit local config/runtime files. Ask me before creating DNS records, exposing ports, rotating secrets, changing npm auth, or selecting a Telegram or Feishu/Lark chat. Finish by running the validation commands from the guide and summarize the config paths, enabled transports, enabled agent CLIs, and any remaining manual steps.
 ```
 
 ## What Ships Today
@@ -118,9 +118,9 @@ Follow the guide exactly. Do not print secrets or commit local config/runtime fi
 | Area | Current support |
 | --- | --- |
 | Agent adapters | Codex, Claude Code, Gemini CLI, OpenCode |
-| Phone transports | Self-hosted relay web UI, Telegram Bot API, outbound webhook notifications |
+| Phone transports | Self-hosted relay web UI, Telegram Bot API, Feishu/Lark app bot, outbound webhook notifications |
 | Native approvals | Codex JSON-RPC, Claude permission-prompt MCP, Gemini CLI approval mode |
-| Session routing | CLI, project/chat, and session selection from relay and Telegram menus |
+| Session routing | CLI, project/chat, and session selection from relay, Telegram, and Feishu/Lark actions |
 | Codex plugin | Installable plugin bundle with Legax skill and MCP tools |
 | Runtime state | Local JSON state for adapter cursors, selected sessions, inbox queues, and launch requests |
 
@@ -155,8 +155,9 @@ This is a dependency-free Node.js project. Everything runs against the Node 18+ 
 | Local all-in-one | You are trying Legax on one machine, or the phone can reach the relay URL you configured. |
 | Split relay and daemon | A public VPS, NAS, or server hosts the relay while agent CLIs stay on a private development machine. |
 | Telegram-first | You prefer Telegram messages and buttons over the browser relay UI. |
+| Feishu/Lark-first | Your team uses Feishu China or Lark global for mobile work notifications. |
 
-The project does not operate a hosted backend, shared relay, or shared Telegram bot. You choose where data goes by configuring the transports.
+The project does not operate a hosted backend, shared relay, shared Telegram bot, or shared Feishu/Lark app. You choose where data goes by configuring the transports.
 
 ## Codex Plugin
 

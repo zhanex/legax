@@ -9,6 +9,7 @@ Legax 把桌面端编码 Agent 与手机连起来，包括对 Shell 命令和补
 | 资产 | 风险 | 项目内的缓解 |
 | --- | --- | --- |
 | Telegram bot token | bot 聊天通道完全被接管；可在手机端冒充桌面 Agent | inline 存放在 `config.yaml`（已 gitignore），不存在 `.env` 层；redact 规则扫描出站文本捕捉意外泄露 |
+| 飞书/Lark app secret 与 verification token | 暴露后可用配置的应用 bot 发消息，或伪造入站回调 | inline 存放在 `config.yaml`（已 gitignore）；不要把真实值写进文档、日志或 issue payload |
 | Self-hosted relay 桌面密钥 | 持有者可作为桌面身份发事件、读取手机回复 | 常量时间比较；`config.yaml` 中 `relay.secret` 为空时拒绝启动，除非显式 `relay.allowInsecureDev: true`，此时 relay 仅绑定 `127.0.0.1` |
 | 已配对浏览器设备 cookie | 持有有效设备 cookie 的人可以读取该浏览器会话的 relay 流量，并提交手机侧回复或审批 | 浏览器通过 daemon 生成的一次性配对码接入；设备 token 只以 relay secret 派生哈希形式保存，可在 relay 设备列表中撤销 |
 | 审批管道（Codex JSON-RPC、Claude permission MCP、Gemini 审批模式） | 自动放行危险命令 | 决策只镜像、不绕过；`paused` 与 `monitor` 模式硬阻断手机端审批 |
@@ -17,7 +18,7 @@ Legax 把桌面端编码 Agent 与手机连起来，包括对 Shell 命令和补
 明确不防御以下场景：
 
 - 桌面被攻陷。Relay 进程与各 Agent CLI 以当前用户权限运行；该用户被攻陷后，所有审批决策都可能在源头被伪造。
-- Telegram 或 webhook 服务方被攻陷。
+- Telegram、飞书/Lark 或 webhook 服务方被攻陷。
 - 手机或浏览器被攻陷且 relay 设备仍处于配对状态。请先在 relay 设备列表撤销该浏览器设备；如果怀疑桌面密钥或 relay store 也泄漏，再轮换 `relay.secret`。
 - 没有 TLS 终结的情况下，relay 暴露到本机以外时的网络层窃听。
 
@@ -49,7 +50,7 @@ Legax 把桌面端编码 Agent 与手机连起来，包括对 Shell 命令和补
 ## 已公开追踪的局限
 
 - Relay 审计是面向元数据的本机 append-only 日志，不是远程设备或会话撤销系统；如果不能接受元数据保留，请调整 `relay.audit.textPreview` 或关闭审计。
-- 浏览器设备撤销只在 relay 本地生效。它会让 relay store 中的浏览器设备 cookie 失效，但不会轮换 `relay.secret`，也不会轮换 Telegram 等第三方 transport 凭据。
+- 浏览器设备撤销只在 relay 本地生效。它会让 relay store 中的浏览器设备 cookie 失效，但不会轮换 `relay.secret`，也不会轮换 Telegram 或飞书/Lark 等第三方 transport 凭据。
 - 跨进程状态使用 lockfile 协调（`scripts/lib/runtime-state.mjs`）；崩溃残留的 lockfile 会在有界重试后被恢复，但不会被外部清理任务清掉。
 
 这些被作为项目局限而非漏洞跟踪；如果你能演示其可被利用，请通过上文描述的私密漏洞上报流程提交。

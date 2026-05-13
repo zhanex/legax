@@ -8,11 +8,11 @@
 
 ## 执行规则
 
-- 不要打印真实 token、relay secret、webhook secret、cookie 或完整私有配置文件。
+- 不要打印真实 token、relay secret、飞书/Lark app secret、webhook secret、cookie 或完整私有配置文件。
 - 不要提交 `config.yaml`、运行时 `data/`、日志、本地 package tarball 或生成的机器配置。
 - 只使用 YAML。项目刻意不支持 JSON 配置。
 - 把运行时状态放在 `LEGAX_HOME` 或其他由操作者拥有且被忽略的路径下。
-- 创建 DNS 记录、暴露端口、轮换密钥、修改 npm auth、选择 Telegram 目标 chat 前，必须停下来询问操作者。
+- 创建 DNS 记录、暴露端口、轮换密钥、修改 npm auth、选择 Telegram 或飞书/Lark 目标 chat 前，必须停下来询问操作者。
 - 只有本指南里的验证信号通过后，才能报告安装成功。
 
 ## 需要收集的输入
@@ -27,6 +27,7 @@
 | Relay secret | 分离部署或连接已有 relay | `replace-with-a-long-random-secret` |
 | Telegram bot token | 启用 Telegram transport | `TELEGRAM_BOT_TOKEN` |
 | Telegram chat id | 启用 Telegram transport | `123456789` |
+| 飞书/Lark app id、app secret、receive id、verification token | 启用飞书/Lark transport | `FEISHU_APP_ID`、`FEISHU_CHAT_ID` |
 | 要启用的 agent CLI | 需要真实 agent 路由 | `codex`、`claude`、`gemini`、`opencode` |
 
 ## 阶段 1：发现环境
@@ -233,6 +234,20 @@ relay:
 
 如果只有 `localhost`、私有局域网 IP 或普通 HTTP，必须停止。
 
+## 阶段 4A：飞书/Lark Transport
+
+只有在人类提供自建应用凭据、批准接收 chat，并且已有公网 HTTPS relay URL 可接收事件回调时，才启用飞书/Lark。
+
+必要步骤：
+
+1. 人类创建飞书/Lark 自建应用，并启用 bot 能力。
+2. 人类给应用授予向目标 chat 发消息的权限。
+3. 在 `config.yaml` 中配置 `feishu` transport 的 `appId`、`appSecret`、`receiveId` 和 `verificationToken`。
+4. 把应用事件订阅请求 URL 配置为 `https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default`。
+5. 确认测试消息或审批卡片能到达 chat，并经 relay 返回。
+
+Lark 国际区设置 `platform: lark`，或显式设置 `apiBaseUrl: https://open.larksuite.com`。
+
 ## 阶段 5：验证信号
 
 报告成功前收集这些信号：
@@ -257,8 +272,9 @@ curl http://127.0.0.1:8787/health
 - 非离线模式下 relay health 为 `OK`。
 - 已启用 adapter 命令为 `OK`，或已明确关闭。
 - 启用 Telegram 时，Telegram transport 为 `OK`。
+- 启用飞书/Lark 时，transport 已配置 app 凭据、receive id 和 verification token。
 - `legax daemon pair` 输出 pairing code 和 pair URL。
-- 手机浏览器或 Telegram 往返消息能到达 daemon。
+- 手机浏览器、Telegram 或飞书/Lark 往返消息能到达 daemon。
 
 ## 失败处理
 
@@ -270,6 +286,7 @@ curl http://127.0.0.1:8787/health
 | Relay health 失败 | 检查进程、端口、防火墙、DNS、TLS 和反向代理。 |
 | 怀疑 secret 不一致 | 让人类比较或轮换 secret；不要打印 secret。 |
 | 缺少 Telegram chat id | 让人类给 bot 发消息，再发现数字 chat id。 |
+| 飞书/Lark 回调返回 unauthorized | 检查 verification token 和 request URL；不要打印 token。 |
 | Agent CLI 缺失 | 只有被要求时才安装 CLI，否则关闭对应 adapter。 |
 | Codex app-server 可见性缺失 | 按 README 的 Codex 共享 app-server 设置处理；不要假设桌面 App 内嵌 server 是共享的。 |
 
@@ -284,6 +301,6 @@ Legax 安装完成。
 - Relay 健康：<ok|failed|not checked>
 - Daemon 状态：<running|not running>
 - 已启用 agents：<list>
-- 手机通道：<browser pairing|telegram|webhook>
+- 手机通道：<browser pairing|telegram|feishu/lark|webhook>
 - 剩余操作者动作：<none or list>
 ```

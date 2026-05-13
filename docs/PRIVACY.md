@@ -16,11 +16,11 @@ The software handles the following data on the operator's machine and in transit
 
 | Data | Source | Where it goes |
 | --- | --- | --- |
-| Agent stdout/stderr text (assistant messages, tool outputs) | The local CLI agent (Codex / Claude Code / Gemini CLI) | The configured transport(s): self-hosted relay, Telegram Bot API, or webhook URL |
+| Agent stdout/stderr text (assistant messages, tool outputs) | The local CLI agent (Codex / Claude Code / Gemini CLI) | The configured transport(s): self-hosted relay, Telegram Bot API, Feishu/Lark app bot, or webhook URL |
 | Approval requests (command, working directory, reason) | Agent-mediated callbacks | Same as above |
-| Phone replies (text and approval decisions) | Phone client over relay or Telegram | Returned to the desktop agent |
+| Phone replies (text and approval decisions) | Phone client over relay, Telegram, or Feishu/Lark | Returned to the desktop agent |
 | Session metadata (session id, agent id, thread id, mode, cursors) | Local runtime state | Stored under `data/runtime-state.json`; included in transport payloads only as needed for routing |
-| Telegram bot token, relay secret, paired browser device cookie | Operator configuration and relay pairing | Bot tokens and relay secrets are stored inline in the operator's gitignored YAML config (`config.yaml` or `/etc/legax-relay/config.yaml`); paired browser device hashes are stored in the relay store and transmitted only to your relay as cookies |
+| Telegram bot token, Feishu/Lark app secret, Feishu/Lark verification token, relay secret, paired browser device cookie | Operator configuration and relay pairing | Third-party app credentials and relay secrets are stored inline in the operator's gitignored YAML config (`config.yaml` or `/etc/legax-relay/config.yaml`); paired browser device hashes are stored in the relay store and transmitted only to your relay as cookies |
 | Relay queues and audit metadata | Agent and phone traffic through the self-hosted relay | Stored in `relay.storePath` and, when audit is enabled, appended to `relay.audit.path`; audit records metadata and an optional short text preview, not full message bodies by default |
 
 The software **does not** transmit data to the project maintainers. There is no telemetry, analytics, crash reporter, or update beacon.
@@ -37,6 +37,7 @@ The software **does not** transmit data to the project maintainers. There is no 
 When the operator enables a transport, message bodies and metadata flow to that third party:
 
 - **Telegram Bot API**: governed by [Telegram's privacy policy](https://telegram.org/privacy). Telegram receives the bot token, chat id, message bodies, and inline-button callbacks.
+- **Feishu/Lark**: governed by the relevant Feishu or Lark service terms and privacy policies. Feishu/Lark receives app credentials during token exchange, receive ids, message bodies, and interactive-card callback values.
 - **Webhook**: the operator-supplied URL. The receiving service sees the same payloads as the relay would.
 - **Self-hosted relay**: data only leaves the operator's infrastructure if the operator exposes the relay externally. The maintainers operate no relay on your behalf.
 
@@ -47,13 +48,13 @@ The MCP server applies regex-based redaction to outbound text by default (`secur
 ## Operator Choices
 
 - Disable any transport by setting `enabled: false` in `config.yaml`.
-- Rotate Telegram bot tokens via [@BotFather](https://t.me/BotFather), rotate the relay secret by editing the YAML config and restarting the relay, and revoke paired browser devices from the relay device list.
+- Rotate Telegram bot tokens via [@BotFather](https://t.me/BotFather), rotate Feishu/Lark app secrets and verification tokens in the developer console, rotate the relay secret by editing the YAML config and restarting the relay, and revoke paired browser devices from the relay device list.
 - Wipe local state by removing the `data/` directory while the daemon is stopped.
 - Self-host the relay to keep data inside your own infrastructure.
 
 ## Phone User Choices
 
-- The operator controls which phone or browser receives notifications. If you receive notifications for a session you did not authorize, contact the operator to revoke the paired browser device or Telegram chat configuration.
+- The operator controls which phone, browser, Telegram chat, or Feishu/Lark chat receives notifications. If you receive notifications for a session you did not authorize, contact the operator to revoke the paired browser device, Telegram chat, or Feishu/Lark app configuration.
 - Phone replies and approval decisions are stored in the relay queue until bounded retention removes older entries. The desktop tracks cursors so old messages are not replayed after polling. Replies and decisions may also appear in the desktop agent's own session history per that agent's data handling.
 
 ## Children's Data

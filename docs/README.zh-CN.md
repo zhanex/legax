@@ -11,6 +11,7 @@
 | [用户手册](USER_MANUAL.zh-CN.md) | 全新安装、relay 设置、手机配对、Telegram 设置、健康检查和排障。 |
 | [AI 安装指南](AI_INSTALL.zh-CN.md) | 让 Agent 或自动化助手替人类操作者安装 Legax。 |
 | [Codex 插件指南](CODEX_PLUGIN.zh-CN.md) | 安装 Codex 插件、审查发布候选元数据，以及理解 Plugin Directory 准备状态。 |
+| [飞书与 Lark Transport](FEISHU_LARK.zh-CN.md) | 飞书/Lark 自建应用 bot、事件回调、路由和安全边界。 |
 | [适配器指南](ADAPTERS.zh-CN.md) | Codex、Claude Code、Gemini CLI、OpenCode、desktop mirror、运行模式和审批边界。 |
 
 ## 设计与扩展文档

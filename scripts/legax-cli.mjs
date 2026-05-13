@@ -134,6 +134,7 @@ async function doctor(args) {
   }
 
   checkTelegram(config, add);
+  checkFeishu(config, add);
   checkAdapters(config, add);
 
   const ok = checks.every((check) => check.status !== "error");
@@ -177,6 +178,28 @@ function checkTelegram(config, add) {
     add(`telegram.transport.${index + 1}`, transport.botToken && !chatMissing ? "ok" : "error", {
       botToken: transport.botToken ? "configured" : "MISSING",
       chatId: chatMissing ? "MISSING" : "configured"
+    });
+  }
+}
+
+function checkFeishu(config, add) {
+  const transports = Array.isArray(config.transports) ? config.transports : [];
+  const feishu = transports.filter((transport) => transport?.type === "feishu" && transport.enabled !== false);
+  if (feishu.length === 0) {
+    add("feishu.transport", "skipped", { message: "no enabled Feishu/Lark transport" });
+    return;
+  }
+  for (const [index, transport] of feishu.entries()) {
+    const receiveId = transport.receiveId ?? transport.chatId ?? transport.openId ?? transport.userId ?? transport.unionId ?? transport.email;
+    const hasWebhook = Boolean(transport.webhookUrl ?? transport.botWebhookUrl);
+    const hasAppCredentials = Boolean((transport.appId ?? transport.app_id) && (transport.appSecret ?? transport.app_secret));
+    const ok = hasWebhook || (hasAppCredentials && receiveId && transport.verificationToken);
+    add(`feishu.transport.${index + 1}`, ok ? "ok" : "error", {
+      appId: (transport.appId ?? transport.app_id) ? "configured" : "MISSING",
+      appSecret: (transport.appSecret ?? transport.app_secret) ? "configured" : "MISSING",
+      receiveId: receiveId ? "configured" : "MISSING",
+      verificationToken: transport.verificationToken ? "configured" : "MISSING",
+      webhookUrl: hasWebhook ? "configured" : "not configured"
     });
   }
 }

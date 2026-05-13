@@ -47,8 +47,8 @@ Reuse the shared modules:
 - `scripts/lib/yaml.mjs` — for `readYaml(path)`.
 - `scripts/lib/runtime-state.mjs` — for cursors, modes, queues, Telegram selections.
 - `scripts/lib/menu-groups.mjs` — for project/chat grouping and Telegram/relay menu callbacks.
-- `scripts/lib/outbound-transports.mjs` — for relay POST + Telegram + webhook.
-- `scripts/lib/inbound-transports.mjs` — for inbox draining, Telegram parsing, and routing helpers.
+- `scripts/lib/outbound-transports.mjs` — for relay POST + Telegram + Feishu/Lark + webhook.
+- `scripts/lib/inbound-transports.mjs` — for inbox draining, Telegram parsing, and routing helpers. Feishu/Lark callbacks enter through the relay and then reuse the relay message path.
 
 Implement at minimum:
 

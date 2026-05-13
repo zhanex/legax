@@ -10,7 +10,7 @@ By installing, running, or modifying Legax, you accept the terms in [LICENSE](..
 
 ## Intended Use
 
-Legax is intended to bridge a desktop coding agent CLI to a phone-side surface (self-hosted relay, Telegram bot, or webhook) for **a single operator's own desktop sessions**. Typical uses:
+Legax is intended to bridge a desktop coding agent CLI to a phone-side surface (self-hosted relay, Telegram bot, Feishu/Lark app bot, or webhook) for **a single operator's own desktop sessions**. Typical uses:
 
 - Mirroring agent status and approval requests to the operator's phone.
 - Letting the operator reply to or approve agent actions while away from the keyboard.
@@ -20,7 +20,7 @@ Legax is intended to bridge a desktop coding agent CLI to a phone-side surface (
 
 - Do not use it to surveil people who have not consented (for example, by routing another developer's agent traffic to your phone without their knowledge).
 - Do not use it to bypass an organization's security controls. The approval-mirror behavior intentionally surfaces decisions to the operator; it does not auto-approve native security prompts.
-- Do not redistribute Telegram bot tokens, relay secrets, or other operator credentials in forks, screenshots, or bug reports. Rotate first if exposure occurs.
+- Do not redistribute Telegram bot tokens, Feishu/Lark app credentials, relay secrets, or other operator credentials in forks, screenshots, or bug reports. Rotate first if exposure occurs.
 - Do not represent the software as offering the warranties or service levels of a hosted product. The maintainers operate no backend.
 
 ## No Warranty
@@ -29,7 +29,7 @@ The software is provided "as is" without warranty of any kind, as stated in the 
 
 ## Third-Party Services
 
-When you enable a third-party transport (Telegram Bot API, webhook endpoint), your use of that transport is also governed by its own terms (for example, [Telegram's Terms of Service](https://telegram.org/tos)). Legax does not reduce or alter those terms.
+When you enable a third-party transport (Telegram Bot API, Feishu/Lark app bot, webhook endpoint), your use of that transport is also governed by its own terms (for example, [Telegram's Terms of Service](https://telegram.org/tos)). Legax does not reduce or alter those terms.
 
 ## Trademarks
 

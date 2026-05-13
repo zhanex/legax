@@ -132,6 +132,7 @@ const TELEGRAM_HARD_LIMIT = 4096;
 const DEFAULT_TELEGRAM_MAX_CHARS = 3900;
 const DEFAULT_TELEGRAM_MAX_PARTS = 8;
 const pinnedTelegramContexts = new Map();
+const feishuTenantTokenCache = new Map();
 
 function normalizeMessageDetail(value) {
   const detail = String(value ?? "all").trim().toLowerCase();
@@ -151,9 +152,11 @@ function stripAgentPolicies(value) {
     agentOverrides,
     relay,
     telegram,
+    feishu,
     webhook,
     relayNotifications,
     telegramNotifications,
+    feishuNotifications,
     webhookNotifications,
     ...rest
   } = value;
@@ -388,6 +391,191 @@ function htmlCode(value) {
 function telegramApiUrl(transport, token, method) {
   const baseUrl = String(transport.apiBaseUrl ?? "https://api.telegram.org/bot").replace(/\/+$/, "");
   return `${baseUrl}${token}/${method}`;
+}
+
+function feishuApiBaseUrl(transport) {
+  if (transport.apiBaseUrl) return String(transport.apiBaseUrl).replace(/\/+$/, "");
+  const platform = String(transport.platform ?? transport.region ?? "").trim().toLowerCase();
+  if (["lark", "global", "intl", "international"].includes(platform)) return "https://open.larksuite.com";
+  return "https://open.feishu.cn";
+}
+
+function feishuNotificationPolicy(config, transport, event) {
+  let policy = {
+    messageDetail: "all",
+    format: "interactive"
+  };
+  const sources = [
+    config.notifications,
+    config.notification,
+    config.daemon,
+    config.daemon?.notifications,
+    config.daemon?.notification,
+    config.remote,
+    config.remote?.notifications,
+    config.remote?.notification,
+    ...agentNotificationSources(config, event),
+    transport,
+    transport.notifications,
+    transport.notification,
+    transport.feishuNotifications
+  ];
+  for (const source of sources) {
+    policy = applyPolicySource(policy, source, transport.type, event);
+  }
+  return policy;
+}
+
+function suppressFeishu(event) {
+  return event.metadata?.feishuSuppress === true
+    || event.metadata?.skipFeishu === true
+    || event.metadata?.feishu === false;
+}
+
+function shouldSendFeishuEvent(policy, event) {
+  const detail = normalizeMessageDetail(policy.messageDetail);
+  if (detail === "none") return false;
+  if (detail === "all") return true;
+  if (detail === "actionable") return isActionableEvent(event);
+  if (detail === "final") return isFinalAgentText(event);
+  return isActionableEvent(event) || isFinalAgentText(event) || isImportantStatus(event) || isExplicitImportantEvent(event);
+}
+
+function truncatePlainText(text, maxLength = 3800) {
+  const value = String(text ?? "");
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 49)).trimEnd()}\n\n[truncated; open the relay UI for the full text]`;
+}
+
+function larkMdEscape(value) {
+  return String(value ?? "").replaceAll("\\", "\\\\");
+}
+
+function formatFeishuTitle(event) {
+  return `${compactHeaderValue(agentName(event), 60)} ${kindName(event.kind)}`;
+}
+
+function formatFeishuText(event) {
+  return truncatePlainText(formatChatMessage(event));
+}
+
+function formatFeishuCardContext(event) {
+  return [
+    projectName(event) ? `**Project:** ${larkMdEscape(compactHeaderValue(projectName(event), 120))}` : undefined,
+    sessionName(event) ? `**Session:** ${larkMdEscape(compactHeaderValue(sessionName(event), 120))}` : undefined,
+    workingDirectory(event) ? `**Dir:** ${larkMdEscape(compactHeaderValue(workingDirectory(event), 180))}` : undefined
+  ].filter(Boolean).join("\n");
+}
+
+function feishuCardButton(text, type, value) {
+  return {
+    tag: "button",
+    text: {
+      tag: "plain_text",
+      content: text
+    },
+    type,
+    value
+  };
+}
+
+function formatFeishuCard(event) {
+  const requestId = event.metadata?.requestId;
+  const body = cleanEventText(event.text);
+  const elements = [];
+  const context = formatFeishuCardContext(event);
+  if (context) {
+    elements.push({
+      tag: "div",
+      text: {
+        tag: "lark_md",
+        content: context
+      }
+    });
+  }
+  if (event.metadata?.title || requestId) {
+    elements.push({
+      tag: "div",
+      text: {
+        tag: "lark_md",
+        content: [
+          event.metadata?.title ? `**Title:** ${larkMdEscape(compactHeaderValue(event.metadata.title, 160))}` : undefined,
+          requestId ? `**Request:** \`${larkMdEscape(compactHeaderValue(requestId, 120))}\`` : undefined
+        ].filter(Boolean).join("\n")
+      }
+    });
+  }
+  if (body) {
+    elements.push({
+      tag: "div",
+      text: {
+        tag: "lark_md",
+        content: truncatePlainText(body, 3000)
+      }
+    });
+  }
+  if (event.kind === "permission_request" && requestId) {
+    const targetAgentId = event.metadata?.targetAgentId ?? event.metadata?.agentId ?? event.agentId;
+    elements.push({
+      tag: "action",
+      actions: [
+        feishuCardButton("Approve", "primary", {
+          legaxAction: "approve",
+          requestId,
+          targetAgentId
+        }),
+        feishuCardButton("Deny", "danger", {
+          legaxAction: "deny",
+          requestId,
+          targetAgentId
+        })
+      ]
+    });
+  }
+  return {
+    config: {
+      wide_screen_mode: true
+    },
+    header: {
+      template: event.kind === "permission_request" ? "orange" : "blue",
+      title: {
+        tag: "plain_text",
+        content: formatFeishuTitle(event)
+      }
+    },
+    elements
+  };
+}
+
+async function feishuTenantAccessToken(transport) {
+  if (transport.tenantAccessToken) return String(transport.tenantAccessToken);
+  const appId = transport.appId ?? transport.app_id;
+  const appSecret = transport.appSecret ?? transport.app_secret;
+  if (!appId) throw new Error("Feishu transport missing appId (set transports[].appId inline in config.yaml).");
+  if (!appSecret) throw new Error("Feishu transport missing appSecret (set transports[].appSecret inline in config.yaml).");
+
+  const baseUrl = feishuApiBaseUrl(transport);
+  const cacheKey = `${baseUrl}|${appId}`;
+  const cached = feishuTenantTokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+
+  const body = await httpJson(`${baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+    method: "POST",
+    body: JSON.stringify({
+      app_id: appId,
+      app_secret: appSecret
+    })
+  }, Number(transport.timeoutMs ?? 15000));
+  if (Number(body.code ?? 0) !== 0 || !body.tenant_access_token) {
+    throw new Error(`Feishu tenant_access_token failed: ${body.msg ?? body.error ?? JSON.stringify(body).slice(0, 300)}`);
+  }
+  const token = String(body.tenant_access_token);
+  const expireMs = Math.max(60_000, Number(body.expire ?? 7200) * 1000);
+  feishuTenantTokenCache.set(cacheKey, {
+    token,
+    expiresAt: Date.now() + expireMs
+  });
+  return token;
 }
 
 function compactHeaderValue(value, maxLength = 120) {
@@ -819,6 +1007,31 @@ export function buildTelegramMessagePayloads(config, transport, event) {
   });
 }
 
+export function buildFeishuMessagePayload(config, transport, event) {
+  if (suppressFeishu(event)) return null;
+  const policy = feishuNotificationPolicy(config, transport, event);
+  if (!shouldSendFeishuEvent(policy, event)) return null;
+  const receiveId = transport.receiveId
+    ?? transport.chatId
+    ?? transport.openId
+    ?? transport.userId
+    ?? transport.unionId
+    ?? transport.email;
+  if (!receiveId) throw new Error("Feishu transport missing receiveId (set transports[].receiveId or chatId inline in config.yaml).");
+  if (event.kind === "permission_request" || event.kind === "user_input_request" || String(policy.format ?? "interactive").toLowerCase() === "interactive") {
+    return {
+      receive_id: receiveId,
+      msg_type: "interactive",
+      content: JSON.stringify(formatFeishuCard(event))
+    };
+  }
+  return {
+    receive_id: receiveId,
+    msg_type: "text",
+    content: JSON.stringify({ text: formatFeishuText(event) })
+  };
+}
+
 async function sendViaTelegram(config, transport, event) {
   const token = transport.botToken;
   const chatId = transport.chatId;
@@ -842,6 +1055,37 @@ async function sendViaTelegram(config, transport, event) {
   return { messageCount: payloads.length, pinnedContext, results };
 }
 
+async function sendViaFeishu(config, transport, event) {
+  if (transport.webhookUrl || transport.botWebhookUrl) {
+    const url = transport.webhookUrl ?? transport.botWebhookUrl;
+    const payload = buildFeishuMessagePayload(config, {
+      ...transport,
+      receiveId: transport.receiveId ?? "webhook"
+    }, event);
+    if (!payload) return { skipped: true, reason: "message_detail" };
+    const body = payload.msg_type === "interactive"
+      ? { msg_type: "interactive", card: JSON.parse(payload.content) }
+      : { msg_type: "text", content: JSON.parse(payload.content) };
+    return await httpJson(url, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }, Number(transport.timeoutMs ?? 15000));
+  }
+
+  const payload = buildFeishuMessagePayload(config, transport, event);
+  if (!payload) return { skipped: true, reason: "message_detail" };
+  const token = await feishuTenantAccessToken(transport);
+  const receiveIdType = transport.receiveIdType ?? transport.receive_id_type ?? "chat_id";
+  const url = `${feishuApiBaseUrl(transport)}/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`;
+  return await httpJson(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  }, Number(transport.timeoutMs ?? 15000));
+}
+
 async function sendViaWebhook(transport, event) {
   if (!transport.url) throw new Error("Webhook transport missing url (set transports[].url inline in config.yaml).");
   const headers = { ...(transport.headers ?? {}) };
@@ -862,6 +1106,7 @@ export async function dispatchAdditionalTransports(config, event, skipTransportN
       let result;
       if (transport.type === "relay") result = await sendViaRelay(transport, event);
       else if (transport.type === "telegram") result = await sendViaTelegram(config, transport, event);
+      else if (transport.type === "feishu") result = await sendViaFeishu(config, transport, event);
       else if (transport.type === "webhook") result = await sendViaWebhook(transport, event);
       else continue;
       results.push({ transport: transport.name, type: transport.type, ok: true, result });

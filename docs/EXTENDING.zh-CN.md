@@ -47,8 +47,8 @@ HTTP server 型 CLI 抄 `scripts/opencode-link.mjs`；stream-json 的 CLI 抄 `s
 - `scripts/lib/yaml.mjs`——`readYaml(path)`。
 - `scripts/lib/runtime-state.mjs`——游标、mode、队列、Telegram 选择。
 - `scripts/lib/menu-groups.mjs`——project/chat 分组以及 Telegram/relay 菜单回调。
-- `scripts/lib/outbound-transports.mjs`——relay POST + Telegram + webhook。
-- `scripts/lib/inbound-transports.mjs`——inbox drain、Telegram 解析与路由辅助。
+- `scripts/lib/outbound-transports.mjs`——relay POST + Telegram + 飞书/Lark + webhook。
+- `scripts/lib/inbound-transports.mjs`——inbox drain、Telegram 解析与路由辅助。飞书/Lark 回调先进入 relay，然后复用 relay message 路径。
 
 至少实现：
 

@@ -13,9 +13,9 @@ English | [Simplified Chinese](SUPPORT.zh-CN.md)
 
 - The command you ran.
 - The expected behavior and actual behavior.
-- The relevant adapter: Codex, Claude Code, Gemini CLI, relay, Telegram, webhook, or MCP.
-- Sanitized logs or payloads. Remove bot tokens, relay secrets, webhook URLs, chat IDs, and local conversation content that should not be shared.
+- The relevant adapter: Codex, Claude Code, Gemini CLI, relay, Telegram, Feishu/Lark, webhook, or MCP.
+- Sanitized logs or payloads. Remove bot tokens, Feishu/Lark app credentials, relay secrets, webhook URLs, chat IDs, and local conversation content that should not be shared.
 
 ## Scope
 
-The maintainers support Legax itself. Upstream agent CLI bugs, Telegram outages, reverse proxy configuration, and operating-system service managers may require upstream or platform-specific support.
+The maintainers support Legax itself. Upstream agent CLI bugs, Telegram or Feishu/Lark outages, reverse proxy configuration, and operating-system service managers may require upstream or platform-specific support.

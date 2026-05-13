@@ -19,6 +19,7 @@ body:
         - Daemon
         - Self-hosted relay
         - Telegram
+        - Feishu/Lark
         - Webhook
         - MCP
         - New adapter

@@ -25,6 +25,7 @@
 - 一个本地 Legax 运行目录。不想使用平台默认目录时，设置 `LEGAX_HOME`。
 - 一个足够长的 relay secret。`legax init` 和 `legax relay init` 都可以自动生成。
 - 可选：通过 BotFather 创建的 Telegram bot token，以及要接收消息的数字 Telegram chat id。
+- 可选：飞书/Lark 自建应用凭据、receive id 和事件 verification token。
 
 默认配置路径：
 
@@ -212,11 +213,23 @@ relay:
 
 这个值必须是公网 HTTPS，不能是 `localhost`、私有局域网地址或普通 HTTP。
 
+## 飞书/Lark 设置
+
+飞书/Lark 是可选通道。团队相比 Telegram 更偏好飞书中国区或 Lark 国际区时再启用。
+
+1. 在飞书/Lark 创建自建应用，并启用 bot 能力。
+2. 给应用授予向目标 chat 发消息的权限，并获取 chat receive id。
+3. 把 `config.example.zh-CN.yaml` 中默认关闭的 `feishu` transport 加到本地 `config.yaml`。
+4. 把应用事件订阅请求 URL 配置为 `https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default`。
+5. 保持 `appSecret`、`verificationToken` 和 receive id 只存在于本地 gitignored 配置中。
+
+Lark 国际区设置 `platform: lark`，或显式设置 `apiBaseUrl: https://open.larksuite.com`。完整配置字段与路由行为见[飞书与 Lark Transport](FEISHU_LARK.zh-CN.md)。
+
 ## 第一次手机交互
 
 relay 和 daemon 都运行后：
 
-1. 用 `legax daemon pair` 配对浏览器，或打开 Telegram bot。
+1. 用 `legax daemon pair` 配对浏览器，打开 Telegram bot，或打开已配置的飞书/Lark chat。
 2. 如果启用了多个 adapter，先选择目标 agent。
 3. 从手机发送一条简短回复。
 4. 确认 daemon 收到并路由了这条消息。

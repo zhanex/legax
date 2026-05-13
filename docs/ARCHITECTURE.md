@@ -34,6 +34,7 @@ Communication transports are the phone plane:
 
 - Self-hosted relay.
 - Telegram Bot API.
+- Feishu/Lark app bot.
 - Outbound webhook.
 
 TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no structured mode, but it is more fragile for permissions, completion detection, and session listing.
@@ -62,6 +63,8 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Telegram supports outbound messages, inbound polling, inline CLI/project/session buttons, and approval buttons.
    - Telegram outbound delivery can be filtered at daemon, CLI, and transport layers (`daemon.notifications`, `codex/claude/gemini/opencode.notifications`, and `transports[].notifications`). Filtering is transport-local; the relay can still keep the full event stream.
    - Telegram messages are HTML-formatted and split into multiple `sendMessage` calls before Telegram's message length limit.
+   - Feishu/Lark supports outbound app-bot messages, interactive approval cards, and inbound event callbacks through the relay's `/api/feishu/events` endpoint.
+   - Feishu/Lark delivery can be filtered with the same `messageDetail` policy shape through `transports[].notifications` or `transports[].feishuNotifications`.
    - Generic webhook supports outbound event delivery to custom services.
    - Only one Telegram poller should read `getUpdates` for a shared bot; messages are queued by `targetAgentId`.
 
@@ -108,9 +111,9 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - `scripts/legax-daemon.mjs`
    - Reads the same YAML config and supervises all enabled CLI adapters.
    - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
-   - Owns relay and Telegram inbound routing while running, so remote menus and on-demand launches do not depend on any specific adapter being alive.
+   - Owns relay, Telegram, and Feishu/Lark-backed inbound routing while running, so remote menus and on-demand launches do not depend on any specific adapter being alive.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
-   - Watches runtime launch requests and starts `autoStart: false` adapters when Telegram or phone actions target them.
+   - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
    - Writes adapter-specific MCP config before launching Claude Code or Gemini CLI when `mcpAutoConfigure` is enabled.
    - Preserves launch-triggering control messages, so selecting an adapter that is not running still returns its project/chat or session list after startup.
 
@@ -127,7 +130,7 @@ Generic MCP path:
 ```mermaid
 flowchart LR
   Agent["Agent Runtime"] --> MCP["MCP Capability Server"]
-  MCP --> Relay["Self-hosted Relay / Telegram / Webhook"]
+  MCP --> Relay["Self-hosted Relay / Telegram / Feishu / Webhook"]
   Relay --> Phone["Phone"]
   Phone --> Relay
   Relay --> MCP
@@ -138,7 +141,7 @@ Codex path:
 
 ```mermaid
 flowchart LR
-  Phone["Phone"] --> Transport["Relay or Telegram"]
+  Phone["Phone"] --> Transport["Relay, Telegram, or Feishu"]
   Transport --> Daemon["legax-daemon.mjs"]
   Daemon --> Inbox["Codex inbox"]
   Inbox --> Link["codex-app-server-link.mjs"]
@@ -152,7 +155,7 @@ Claude path:
 
 ```mermaid
 flowchart LR
-  Phone["Phone"] --> Transport["Relay or Telegram"]
+  Phone["Phone"] --> Transport["Relay, Telegram, or Feishu"]
   Transport --> Daemon["legax-daemon.mjs"]
   Daemon --> Inbox["Claude inbox"]
   Inbox --> Link["claude-code-link.mjs"]
@@ -167,7 +170,7 @@ Gemini path:
 
 ```mermaid
 flowchart LR
-  Phone["Phone"] --> Transport["Relay or Telegram"]
+  Phone["Phone"] --> Transport["Relay, Telegram, or Feishu"]
   Transport --> Daemon["legax-daemon.mjs"]
   Daemon --> Inbox["Gemini inbox"]
   Inbox --> Link["gemini-cli-link.mjs"]
@@ -181,7 +184,7 @@ OpenCode path:
 
 ```mermaid
 flowchart LR
-  Phone["Phone"] --> Transport["Relay or Telegram"]
+  Phone["Phone"] --> Transport["Relay, Telegram, or Feishu"]
   Transport --> Daemon["legax-daemon.mjs"]
   Daemon --> Inbox["OpenCode inbox"]
   Inbox --> Link["opencode-link.mjs"]
@@ -195,13 +198,13 @@ On-demand launch path:
 
 ```mermaid
 flowchart LR
-  Remote["Relay or Telegram button/text"] --> Daemon["legax-daemon.mjs"]
+  Remote["Relay, Telegram, or Feishu button/text"] --> Daemon["legax-daemon.mjs"]
   Daemon --> State["runtimeStatePath launch request"]
   Daemon --> Inbox["Target agent inbox"]
   Daemon --> MCP["MCP config writer"]
   Daemon --> Adapter["Target CLI adapter"]
   Adapter --> Inbox
-  Adapter --> Transport["Relay or Telegram"]
+  Adapter --> Transport["Relay, Telegram, or Feishu"]
 ```
 
 ## Runtime Modes
@@ -220,14 +223,14 @@ Selecting a Claude Code, Gemini CLI, or OpenCode adapter from Telegram or the ph
 
 ## Routing Priority
 
-When several adapters share one transport (most commonly: one Telegram bot routing to Codex / Claude / Gemini / OpenCode in the same process tree), two distinct decisions are made:
+When several adapters share one transport (for example: one Telegram bot or Feishu app routing to Codex / Claude / Gemini / OpenCode in the same process tree), two distinct decisions are made:
 
 **1. Which agent is the inbound message for?**
 
 The daemon remote router resolves a target agent in this order while the daemon is running; standalone adapters use the same rules when `daemon.remoteRouter: false`:
 
-1. `message.targetAgentId` set on the inbound message itself (phone web UI buttons, Telegram inline callbacks, and the relay's parsed `/use <agent>` syntax all set this).
-2. Per-transport runtime selection — set when the phone or Telegram user picks an agent via a control message; persisted in `runtimeStatePath` so it survives daemon restarts.
+1. `message.targetAgentId` set on the inbound message itself (phone web UI buttons, Telegram inline callbacks, Feishu card values, and the relay's parsed `/use <agent>` syntax all set this).
+2. Per-transport runtime selection — set when the phone or third-party user picks an agent via a control message; persisted in `runtimeStatePath` so it survives daemon restarts.
 3. `transports[N].defaultTarget` configured for that specific transport.
 4. `config.routing.defaultTarget` global fallback.
 5. Special values: `"self"` → the receiving adapter's own `agentId`; `"none"` (or empty) → no default, the message is dropped if no per-message target exists.
@@ -236,7 +239,7 @@ The literal target `*`, `all`, or `broadcast` skips routing and delivers to ever
 
 **2. Who polls remote inbound channels?**
 
-With the unified daemon, `daemon.remoteRouter: true` is the default. The daemon owns relay `/api/messages` polling and Telegram `getUpdates`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
+With the unified daemon, `daemon.remoteRouter: true` is the default. The daemon owns relay `/api/messages` polling and Telegram `getUpdates`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. Feishu/Lark callbacks enter through the relay and then follow the same `/api/messages` path. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
 
 If you run a single adapter without the daemon, only one process can hold the Telegram long-poll cursor; the others must yield. The standalone fallback resolution order is:
 

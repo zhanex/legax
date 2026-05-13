@@ -25,6 +25,7 @@ Install or prepare:
 - A local directory for Legax runtime files. Set `LEGAX_HOME` if you do not want the platform default.
 - A long relay secret. `legax init` and `legax relay init` can generate one for you.
 - Optional: your own Telegram bot token from BotFather and the numeric Telegram chat id that should receive messages.
+- Optional: your own Feishu/Lark self-built app credentials, receive id, and event verification token.
 
 Default config locations:
 
@@ -212,11 +213,23 @@ relay:
 
 The value must be public HTTPS, not `localhost`, a private LAN address, or plain HTTP.
 
+## Feishu/Lark Setup
+
+Feishu/Lark is optional. Use it when your team prefers Feishu China or Lark global over Telegram.
+
+1. Create a self-built app in Feishu/Lark and enable the bot capability.
+2. Give the app permission to send messages to the target chat, then obtain the chat receive id.
+3. Add the disabled `feishu` transport from `config.example.yaml` to your local `config.yaml`.
+4. Configure the app's event subscription request URL as `https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default`.
+5. Keep `appSecret`, `verificationToken`, and receive ids local and gitignored.
+
+Set `platform: lark` or `apiBaseUrl: https://open.larksuite.com` for Lark global. See [Feishu and Lark Transport](FEISHU_LARK.md) for the exact config fields and routing behavior.
+
 ## First Phone Interaction
 
 After the relay and daemon are running:
 
-1. Pair the browser with `legax daemon pair`, or open the Telegram bot.
+1. Pair the browser with `legax daemon pair`, open the Telegram bot, or open the configured Feishu/Lark chat.
 2. Select the target agent if more than one adapter is enabled.
 3. Send a short reply from the phone.
 4. Confirm the daemon receives and routes the message.

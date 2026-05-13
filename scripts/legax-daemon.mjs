@@ -170,6 +170,19 @@ function summarizeTransports(config) {
         secret: presence(transport.secret)
       };
     }
+    if (transport.type === "feishu") {
+      const receiveId = transport.receiveId ?? transport.chatId ?? transport.openId ?? transport.userId ?? transport.unionId ?? transport.email;
+      return {
+        ...base,
+        platform: transport.platform ?? "feishu",
+        appId: presence(transport.appId ?? transport.app_id),
+        appSecret: presence(transport.appSecret ?? transport.app_secret),
+        receiveId: presence(receiveId),
+        verificationToken: presence(transport.verificationToken),
+        webhookUrl: presence(transport.webhookUrl ?? transport.botWebhookUrl),
+        defaultTarget: transport.defaultTarget ?? null
+      };
+    }
     return base;
   });
 }
@@ -222,6 +235,7 @@ function describeTransport(t) {
   const bits = [];
   if (t.type === "relay") bits.push(`url=${t.baseUrl ?? "?"}`, `secret=${t.secret}`);
   else if (t.type === "telegram") bits.push(`bot=${t.botToken}`, `chatId=${t.chatId}`, `poller=${t.pollerAgentId ?? "-"}`, `default=${t.defaultTarget ?? "-"}`);
+  else if (t.type === "feishu") bits.push(`platform=${t.platform}`, `app=${t.appId}`, `secret=${t.appSecret}`, `receive=${t.receiveId}`, `verify=${t.verificationToken}`, `default=${t.defaultTarget ?? "-"}`);
   else if (t.type === "webhook") bits.push(`url=${t.url}`, `secret=${t.secret}`);
   return `[${tag}] ${t.type.padEnd(8)} name=${t.name}${bits.length ? "  " + bits.join(" ") : ""}`;
 }

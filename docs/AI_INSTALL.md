@@ -8,11 +8,11 @@ For the human-facing walkthrough, see [User Manual](USER_MANUAL.md). For interna
 
 ## Operating Rules
 
-- Never print real tokens, relay secrets, webhook secrets, cookies, or full private config files.
+- Never print real tokens, relay secrets, Feishu/Lark app secrets, webhook secrets, cookies, or full private config files.
 - Never commit `config.yaml`, runtime `data/`, logs, local package tarballs, or generated machine config.
 - Use YAML only. JSON config is intentionally unsupported.
 - Put runtime state under `LEGAX_HOME` or another operator-owned ignored path.
-- Stop and ask the human before creating DNS records, exposing a port, rotating a secret, changing npm auth, or choosing a Telegram chat target.
+- Stop and ask the human before creating DNS records, exposing a port, rotating a secret, changing npm auth, or choosing a Telegram or Feishu/Lark chat target.
 - Do not claim success until the validation signals in this guide pass.
 
 ## Inputs to Collect
@@ -27,6 +27,7 @@ Ask for these values only when they are not discoverable locally:
 | Relay secret | Split deployment or existing relay | `replace-with-a-long-random-secret` |
 | Telegram bot token | Telegram transport is enabled | `TELEGRAM_BOT_TOKEN` |
 | Telegram chat id | Telegram transport is enabled | `123456789` |
+| Feishu/Lark app id, app secret, receive id, verification token | Feishu/Lark transport is enabled | `FEISHU_APP_ID`, `FEISHU_CHAT_ID` |
 | Agent CLIs to enable | Real agent routing is needed | `codex`, `claude`, `gemini`, `opencode` |
 
 ## Phase 1: Discover the Environment
@@ -233,6 +234,20 @@ relay:
 
 Stop if the only available URL is `localhost`, a private LAN IP, or plain HTTP.
 
+## Phase 4A: Feishu/Lark Transport
+
+Only enable Feishu/Lark when the human provides self-built app credentials, approves the receive chat, and has a public HTTPS relay URL for event callbacks.
+
+Required steps:
+
+1. Human creates a Feishu/Lark self-built app and enables bot capability.
+2. Human grants the app permission to message the target chat.
+3. Configure the `feishu` transport in `config.yaml` with `appId`, `appSecret`, `receiveId`, and `verificationToken`.
+4. Configure the app event subscription request URL as `https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default`.
+5. Confirm a test message or approval card reaches the chat and returns through the relay.
+
+Set `platform: lark` or `apiBaseUrl: https://open.larksuite.com` for Lark global.
+
 ## Phase 5: Validation Signals
 
 Collect these signals before reporting success:
@@ -257,8 +272,9 @@ A successful setup has:
 - Relay health is `OK` when not offline.
 - Enabled adapter commands are `OK`, or intentionally disabled.
 - Telegram transport is `OK` when enabled.
+- Feishu/Lark transport has app credentials, receive id, and verification token when enabled.
 - `legax daemon pair` prints a pairing code and pair URL.
-- A phone browser or Telegram round trip reaches the daemon.
+- A phone browser, Telegram, or Feishu/Lark round trip reaches the daemon.
 
 ## Failure Handling
 
@@ -270,6 +286,7 @@ A successful setup has:
 | Relay health fails | Check process, port, firewall, DNS, TLS, and reverse proxy. |
 | Secret mismatch is suspected | Ask the human to compare or rotate secrets; do not print them. |
 | Telegram chat id is missing | Ask the human to message the bot, then discover the numeric chat id. |
+| Feishu/Lark callback is unauthorized | Check the configured verification token and request URL; do not print the token. |
 | Agent CLI missing | Install the CLI only if requested, or disable the adapter. |
 | Codex app-server visibility is missing | Follow the README Codex shared app-server setup; do not assume the desktop embedded server is shared. |
 
@@ -284,6 +301,6 @@ Legax install completed.
 - Relay health: <ok|failed|not checked>
 - Daemon status: <running|not running>
 - Enabled agents: <list>
-- Phone path: <browser pairing|telegram|webhook>
+- Phone path: <browser pairing|telegram|feishu/lark|webhook>
 - Remaining operator actions: <none or list>
 ```
