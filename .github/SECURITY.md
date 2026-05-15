@@ -9,6 +9,7 @@ Legax bridges a desktop coding agent to a phone, including approval decisions fo
 | Asset | Risk | Mitigation in this project |
 | --- | --- | --- |
 | Telegram bot token | Full takeover of the bot's chat surface; ability to impersonate the desktop agent on the phone | Stored inline in `config.yaml` (gitignored); no env layer; redaction patterns scan outbound text for accidental leaks |
+| Feishu/Lark app secret and verification token | Ability to send as the configured app bot or spoof inbound callbacks if exposed | Stored inline in `config.yaml` (gitignored); never include real values in docs, logs, or issue payloads |
 | Self-hosted relay desktop secret | Anyone holding it can post events as the desktop or fetch phone replies | Constant-time compare; refusal to start without `relay.secret` set in `config.yaml` unless explicit `relay.allowInsecureDev: true`, in which case the relay binds to `127.0.0.1` only |
 | Paired browser device cookie | Anyone holding an active paired-device cookie can read relay traffic for that browser session and submit phone-side replies or approvals | Browser access is paired with daemon-generated one-time codes; device tokens are stored only as relay-secret-derived hashes and can be revoked from the relay device list |
 | Approval pipeline (Codex JSON-RPC, Claude permission MCP, Gemini approval mode) | Auto-approve of dangerous commands | Decisions are mirrored, never bypassed; `paused` and `monitor` modes hard-block phone approvals |
@@ -17,7 +18,7 @@ Legax bridges a desktop coding agent to a phone, including approval decisions fo
 Out-of-scope (the project does not defend against these):
 
 - A compromised desktop machine. The relay process and the agent CLIs run with the user's privileges; if those privileges are compromised, all approval decisions can be forged at the source.
-- Compromise of the Telegram or webhook provider.
+- Compromise of the Telegram, Feishu/Lark, or webhook provider.
 - Phone or browser compromise while a relay device remains paired. Revoke the paired browser device from the relay device list and rotate `relay.secret` if you suspect the desktop secret or relay store also leaked.
 - Network-level eavesdropping when the relay is exposed without TLS termination.
 
@@ -49,7 +50,7 @@ We aim to acknowledge within 5 business days and to resolve or mitigate within 3
 ## Known Limitations Tracked Publicly
 
 - Relay audit is metadata-oriented, append-only, and local to the relay host. It is not a remote device/session revocation system; tune `relay.audit.textPreview` or disable audit if metadata retention is not acceptable.
-- Paired-browser revocation is relay-local. It invalidates browser device cookies stored in the relay store, but it does not rotate `relay.secret` or credentials held by third-party transports such as Telegram.
+- Paired-browser revocation is relay-local. It invalidates browser device cookies stored in the relay store, but it does not rotate `relay.secret` or credentials held by third-party transports such as Telegram or Feishu/Lark.
 - Cross-process state coordination uses a lockfile (`scripts/lib/runtime-state.mjs`); a stale lockfile from a crashed process is recovered after a bounded retry, not by external lock cleanup.
 
 These are tracked as project limitations rather than vulnerabilities; if you can demonstrate exploitation of one, please report through the private vulnerability reporting process described above.

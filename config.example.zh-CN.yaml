@@ -122,6 +122,26 @@ transports:
       splitLongMessages: true     # 长文本拆成多条 sendMessage。
       maxParts: 8                 # 超出部分会在最后一条中截断并提示。
 
+  # Feishu/Lark transport 面向已经把飞书中国区或 Lark 国际区作为移动工作台的团队。
+  # 使用自建应用 bot 发送出站消息；把应用的事件订阅请求 URL 配到
+  # https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default，即可接收入站文本回复
+  # 和卡片按钮动作。app secret 与 verification token 只写入已 gitignore 的 config.yaml。
+  - name: feishu
+    type: feishu
+    enabled: false
+    platform: feishu                             # Lark 国际区设为 lark，连接 https://open.larksuite.com
+    appId: FEISHU_APP_ID_VALUE_HERE
+    appSecret: FEISHU_APP_SECRET_VALUE_HERE
+    receiveIdType: chat_id                       # chat_id、open_id、user_id、union_id 或 email
+    receiveId: FEISHU_CHAT_ID_VALUE_HERE
+    verificationToken: FEISHU_EVENT_VERIFICATION_TOKEN
+    # encryptKey: FEISHU_EVENT_ENCRYPT_KEY_VALUE_HERE # 预留；当前加密回调需要上游网关先解密
+    # apiBaseUrl: https://open.feishu.cn          # 可选；Lark 使用 https://open.larksuite.com
+    defaultTarget: none
+    timeoutMs: 15000
+    notifications:
+      messageDetail: important
+
   - name: generic-webhook
     type: webhook
     enabled: false

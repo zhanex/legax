@@ -151,7 +151,8 @@ export async function startRelay(t, {
   host = "127.0.0.1",
   desktopSecret = "desktop-secret",
   allowInsecureDev = false,
-  configBom = false
+  configBom = false,
+  extraYaml = ""
 } = {}) {
   await fs.mkdir(dataDir, { recursive: true });
   const port = await getFreePort();
@@ -169,7 +170,8 @@ export async function startRelay(t, {
     + `  allowInsecureDev: ${allowInsecureDev ? "true" : "false"}\n`
     + `  audit:\n`
     + `    enabled: false\n`;
-  await fs.writeFile(relayConfigPath, configBom ? `\uFEFF${yaml}` : yaml, "utf8");
+  const fullYaml = extraYaml ? `${yaml}\n${extraYaml.trim()}\n` : yaml;
+  await fs.writeFile(relayConfigPath, configBom ? `\uFEFF${fullYaml}` : fullYaml, "utf8");
   const child = spawnNodeProcess([path.join(pluginRoot, script)], {
     cwd: pluginRoot,
     env: {

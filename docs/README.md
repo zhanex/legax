@@ -11,6 +11,7 @@ Use this index to choose the shortest document for the job. The root README stay
 | [User Manual](USER_MANUAL.md) | Fresh install, relay setup, phone pairing, Telegram setup, health checks, troubleshooting. |
 | [AI Install Guide](AI_INSTALL.md) | An agent or automation assistant installing Legax for a human operator. |
 | [Codex Plugin Guide](CODEX_PLUGIN.md) | Installing the Codex plugin, reviewing release-candidate metadata, and understanding Plugin Directory readiness. |
+| [Feishu and Lark Transport](FEISHU_LARK.md) | Feishu/Lark app-bot setup, event callbacks, routing, and safety boundaries. |
 | [Adapter Guide](ADAPTERS.md) | Codex, Claude Code, Gemini CLI, OpenCode, desktop mirror, runtime modes, and approval boundaries. |
 | [Claude Code Integration](CLAUDE_CODE_INTEGRATION.md) | Claude Code adapter, permission-prompt MCP flow, safety boundaries, and ecosystem review questions. |
 

@@ -127,6 +127,28 @@ transports:
       splitLongMessages: true     # split long text into multiple sendMessage calls.
       maxParts: 8                 # remaining overflow is truncated with a notice.
 
+  # Feishu/Lark transport is for teams that already use Feishu China or Lark
+  # global as their mobile work surface. Use a self-built app bot for outbound
+  # messages and configure the app's event subscription request URL to point at
+  # https://YOUR_RELAY_HOST/api/feishu/events?sessionId=default for inbound text
+  # replies and card button actions. Keep the app secret and verification token
+  # in gitignored config.yaml only.
+  - name: feishu
+    type: feishu
+    enabled: false
+    platform: feishu                             # set to lark for https://open.larksuite.com
+    appId: FEISHU_APP_ID_VALUE_HERE
+    appSecret: FEISHU_APP_SECRET_VALUE_HERE
+    receiveIdType: chat_id                       # chat_id, open_id, user_id, union_id, or email
+    receiveId: FEISHU_CHAT_ID_VALUE_HERE
+    verificationToken: FEISHU_EVENT_VERIFICATION_TOKEN
+    # encryptKey: FEISHU_EVENT_ENCRYPT_KEY_VALUE_HERE # reserved; encrypted callbacks need an upstream decrypting gateway today
+    # apiBaseUrl: https://open.feishu.cn          # optional; use https://open.larksuite.com for Lark
+    defaultTarget: none
+    timeoutMs: 15000
+    notifications:
+      messageDetail: important
+
   - name: generic-webhook
     type: webhook
     enabled: false

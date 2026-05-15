@@ -7,48 +7,151 @@ import crypto from "node:crypto";
 // Standalone-deployable; we keep an inlined minimal YAML parser instead of
 // importing from scripts/lib because the installer copies just this file.
 function parseSimpleYaml(text) {
-  const root = {};
-  const stack = [{ obj: root, indent: -1 }];
-  let lastKey = null;
-  let lastObj = null;
   const source = String(text).replace(/^\uFEFF/, "");
+  const root = {};
+  let currentTop = null;
+  let currentTransport = null;
+  let currentListKey = null;
+
   for (const rawLine of source.replace(/\r\n/g, "\n").split("\n")) {
-    const stripped = rawLine.replace(/(^|\s)#.*$/, "").replace(/\s+$/, "");
-    if (!stripped.trim()) continue;
-    const indent = stripped.match(/^\s*/)[0].length;
-    const content = stripped.slice(indent);
-    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
-    const top = stack[stack.length - 1].obj;
-    if (content.startsWith("- ")) {
-      const value = content.slice(2).trim();
-      if (Array.isArray(top)) top.push(parseScalar(value));
+    const withoutComment = stripYamlComment(rawLine);
+    if (!withoutComment.trim()) continue;
+    const indent = withoutComment.match(/^\s*/)[0].length;
+    const content = withoutComment.trim();
+
+    if (indent === 0) {
+      const entry = parseYamlKeyValue(content);
+      if (!entry) continue;
+      currentTop = entry.key;
+      currentTransport = null;
+      currentListKey = null;
+      if (entry.value === "") root[entry.key] = entry.key === "transports" ? [] : {};
+      else {
+        root[entry.key] = parseYamlScalar(entry.value);
+        currentTop = null;
+      }
       continue;
     }
-    const m = content.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
-    if (!m) continue;
-    const [, key, valueRaw] = m;
-    const value = valueRaw.trim();
-    if (value === "") {
-      const child = {};
-      top[key] = child;
-      stack.push({ obj: child, indent });
-      lastKey = key; lastObj = top;
-    } else {
-      top[key] = parseScalar(value);
+
+    if (currentTop === "transports") {
+      if (content.startsWith("- ")) {
+        currentTransport = {};
+        root.transports.push(currentTransport);
+        currentListKey = null;
+        const remainder = content.slice(2).trim();
+        if (remainder) assignYamlEntry(currentTransport, remainder);
+        continue;
+      }
+      if (currentTransport) {
+        const entry = parseYamlKeyValue(content);
+        if (entry) {
+          if (entry.value === "") {
+            currentTransport[entry.key] = [];
+            currentListKey = entry.key;
+          } else {
+            currentTransport[entry.key] = parseYamlScalar(entry.value);
+            currentListKey = null;
+          }
+          continue;
+        }
+        if (currentListKey && content.startsWith("- ")) {
+          currentTransport[currentListKey].push(parseYamlScalar(content.slice(2).trim()));
+        }
+      }
+      continue;
+    }
+
+    if (currentTop && root[currentTop] && typeof root[currentTop] === "object") {
+      if (currentListKey && content.startsWith("- ")) {
+        root[currentTop][currentListKey].push(parseYamlScalar(content.slice(2).trim()));
+        continue;
+      }
+      const entry = parseYamlKeyValue(content);
+      if (!entry) continue;
+      if (entry.value === "") {
+        root[currentTop][entry.key] = [];
+        currentListKey = entry.key;
+      } else {
+        root[currentTop][entry.key] = parseYamlScalar(entry.value);
+        currentListKey = null;
+      }
     }
   }
   return root;
 }
 
-function parseScalar(text) {
-  const t = text.trim();
-  if (t === "") return "";
-  if (t === "true") return true;
-  if (t === "false") return false;
-  if (t === "null") return null;
-  if (/^-?\d+(?:\.\d+)?$/.test(t)) return Number(t);
-  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) return t.slice(1, -1);
-  return t;
+function stripYamlComment(line) {
+  let single = false;
+  let double = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "'" && !double) {
+      single = !single;
+      continue;
+    }
+    if (char === '"' && !single) {
+      let backslashes = 0;
+      for (let scan = index - 1; scan >= 0 && line[scan] === "\\"; scan -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) double = !double;
+      continue;
+    }
+    if (char === "#" && !single && !double) return line.slice(0, index);
+  }
+  return line;
+}
+
+function parseYamlKeyValue(content) {
+  const index = content.indexOf(":");
+  if (index < 0) return null;
+  return { key: content.slice(0, index).trim(), value: content.slice(index + 1).trim() };
+}
+
+function assignYamlEntry(target, content) {
+  const entry = parseYamlKeyValue(content);
+  if (!entry) return;
+  target[entry.key] = entry.value === "" ? {} : parseYamlScalar(entry.value);
+}
+
+function parseYamlScalar(value) {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return decodeDoubleQuoted(trimmed.slice(1, -1));
+  }
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
+}
+
+function decodeDoubleQuoted(body) {
+  let output = "";
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char !== "\\" || index + 1 >= body.length) {
+      output += char;
+      continue;
+    }
+    const next = body[index + 1];
+    index += 1;
+    switch (next) {
+      case "n": output += "\n"; break;
+      case "r": output += "\r"; break;
+      case "t": output += "\t"; break;
+      case "\\": output += "\\"; break;
+      case '"': output += '"'; break;
+      case "/": output += "/"; break;
+      case "0": output += "\0"; break;
+      default:
+        output += "\\" + next;
+        break;
+    }
+  }
+  return output;
 }
 
 function readYaml(filePath) {
@@ -531,6 +634,125 @@ function normalizeMessage(body, sessionId, seq) {
     seq,
     createdAt: body.createdAt ?? new Date().toISOString()
   };
+}
+
+function enabledFeishuTransports() {
+  return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
+    .filter((transport) => transport?.enabled !== false && transport?.type === "feishu");
+}
+
+function feishuTransportFromRequest(url) {
+  const name = url.searchParams.get("transport");
+  const transports = enabledFeishuTransports();
+  if (name) return transports.find((transport) => String(transport.name ?? "feishu") === name);
+  return transports[0];
+}
+
+function feishuRequestToken(body) {
+  return String(body?.token ?? body?.header?.token ?? "");
+}
+
+function verifyFeishuEvent(transport, body) {
+  const expected = String(transport?.verificationToken ?? transport?.token ?? "");
+  return Boolean(expected) && safeEqual(feishuRequestToken(body), expected);
+}
+
+function parseJsonValue(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return {};
+  }
+}
+
+function feishuDefaultTarget(transport) {
+  const configured = transport?.defaultTarget ?? RAW_CONFIG.routing?.defaultTarget;
+  if (!configured || configured === "none") return "";
+  return String(configured);
+}
+
+function targetFromRequestId(requestId, fallbackTargetAgentId) {
+  const value = String(requestId ?? "");
+  if (value.startsWith("codex-")) return "codex-cli";
+  if (value.startsWith("claude-")) return "claude-code";
+  return fallbackTargetAgentId;
+}
+
+function feishuCreatedAt(body) {
+  const raw = body?.header?.create_time ?? body?.event?.message?.create_time ?? body?.event?.create_time;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return new Date().toISOString();
+  const ms = value > 10_000_000_000 ? value : value * 1000;
+  return new Date(ms).toISOString();
+}
+
+function feishuEventId(body) {
+  return String(
+    body?.header?.event_id
+      ?? body?.event?.message?.message_id
+      ?? body?.event?.open_message_id
+      ?? crypto.randomUUID()
+  );
+}
+
+function feishuMessageText(message) {
+  const content = parseJsonValue(message?.content);
+  return String(content.text ?? content.content ?? "").trim();
+}
+
+function feishuIncomingMessage(body, transport) {
+  const eventType = String(body?.header?.event_type ?? body?.type ?? "");
+  const id = `feishu:${feishuEventId(body)}`;
+  const createdAt = feishuCreatedAt(body);
+  const fallbackTarget = feishuDefaultTarget(transport);
+  if (eventType === "im.message.receive_v1" || body?.event?.message) {
+    const text = feishuMessageText(body.event?.message);
+    if (!text) return null;
+    return {
+      id,
+      transport: "feishu",
+      type: "text",
+      targetAgentId: fallbackTarget,
+      text,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+
+  const value = body?.event?.action?.value;
+  if (value && typeof value === "object") {
+    const action = String(value.legaxAction ?? value.action ?? "").toLowerCase();
+    const requestId = String(value.requestId ?? value.request_id ?? "");
+    const targetAgentId = String(value.targetAgentId ?? value.agentId ?? targetFromRequestId(requestId, fallbackTarget));
+    if ((action === "approve" || action === "deny") && requestId) {
+      return {
+        id,
+        transport: "feishu",
+        type: "permission_decision",
+        targetAgentId,
+        requestId,
+        decision: action,
+        text: action === "approve" ? "Approved from Feishu" : "Denied from Feishu",
+        createdAt,
+        receivedAt: new Date().toISOString()
+      };
+    }
+    if (action === "answer" && requestId) {
+      return {
+        id,
+        transport: "feishu",
+        type: "user_input_response",
+        targetAgentId,
+        requestId,
+        text: String(value.text ?? value.answer ?? "").trim(),
+        createdAt,
+        receivedAt: new Date().toISOString()
+      };
+    }
+  }
+  return null;
 }
 
 function messageMatchesTarget(message, agentId, taskId) {
@@ -3549,6 +3771,32 @@ async function route(req, res) {
     saveStore(store);
     appendAudit("desktop->phone", event);
     sendJson(res, 200, { ok: true, event });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/feishu/events") {
+    const body = await readJsonBody(req);
+    const transport = feishuTransportFromRequest(url);
+    if (!transport || !verifyFeishuEvent(transport, body)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    if (body.type === "url_verification" && body.challenge) {
+      sendJson(res, 200, { challenge: body.challenge });
+      return;
+    }
+    const messageBody = feishuIncomingMessage(body, transport);
+    if (!messageBody) {
+      sendJson(res, 200, { ok: true, ignored: true });
+      return;
+    }
+    const store = loadStore();
+    const [sessionId, session] = getSession(store, url.searchParams.get("sessionId") ?? transport.sessionId);
+    const message = normalizeMessage(messageBody, sessionId, session.nextMessageSeq++);
+    boundedPush(session.messages, message);
+    saveStore(store);
+    appendAudit("phone->desktop", message);
+    sendJson(res, 200, { ok: true, message });
     return;
   }
 

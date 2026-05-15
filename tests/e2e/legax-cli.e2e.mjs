@@ -56,6 +56,7 @@ opencode:
   assert.ok(body.checks.some((check) => check.name === "relay.health" && check.status === "ok"));
   assert.ok(body.checks.some((check) => check.name === "adapter.codex-cli.command" && check.status === "ok"));
   assert.ok(body.checks.some((check) => check.name === "telegram.transport" && check.status === "skipped"));
+  assert.ok(body.checks.some((check) => check.name === "feishu.transport" && check.status === "skipped"));
   assert.doesNotMatch(result.stdout, new RegExp(relay.desktopSecret));
 });
 
