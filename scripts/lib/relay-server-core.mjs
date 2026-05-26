@@ -1407,19 +1407,23 @@ function forkPortableGeneration(store, baseGenerationId, body) {
   const base = store.generations[baseGenerationId];
   if (!base) throw relayHttpError(404, "base generation not found");
   requireCurrentLease(store, baseGenerationId, body);
+  const checkpoint = portableRecord(body.checkpoint ?? base.checkpoint ?? {});
+  const artifactId = relayId(body.artifactId ?? checkpoint.artifactId, "artifactId", { required: false });
+  if (artifactId) checkpoint.artifactId = artifactId;
   const generation = createPortableGeneration(store, {
     sessionId: base.sessionId,
     hostId: body.hostId,
     adapterId: body.adapterId ?? base.adapterId,
     nativeSession: body.nativeSession ?? {},
     worktree: body.worktree ?? base.worktree ?? {},
-    checkpoint: body.checkpoint ?? base.checkpoint ?? {},
+    checkpoint,
     state: body.state ?? "created"
   }, { baseGenerationId });
   appendRelayStoreEvent(store, "generation.forked", {
     sessionId: base.sessionId,
     generationId: generation.id,
-    baseGenerationId
+    baseGenerationId,
+    artifactId
   });
   return generation;
 }
@@ -1437,12 +1441,15 @@ function createPortableHandoff(store, body) {
     generationId,
     fromHostId: relayId(body.fromHostId, "fromHostId", { required: false }),
     toHostId: relayId(body.toHostId, "toHostId"),
+    checkpointArtifactId: relayId(body.artifactId ?? body.checkpointArtifactId, "artifactId", { required: false }),
+    artifactIds: [],
     state: "requested",
     transitions: [{ state: "requested", at: now }],
     error: null,
     createdAt: now,
     updatedAt: now
   };
+  if (handoff.checkpointArtifactId) handoff.artifactIds.push(handoff.checkpointArtifactId);
   store.handoffs[handoff.id] = handoff;
   appendRelayStoreEvent(store, "handoff.requested", {
     sessionId,
@@ -1473,13 +1480,127 @@ function transitionPortableHandoff(store, handoffId, body) {
   handoff.state = nextState;
   handoff.updatedAt = now;
   if (nextState === "failed") handoff.error = body.error ?? { message: "handoff failed" };
+  const artifactId = relayId(body.artifactId ?? body.checkpointArtifactId, "artifactId", { required: false });
+  if (artifactId) {
+    if (!Array.isArray(handoff.artifactIds)) handoff.artifactIds = [];
+    appendUnique(handoff.artifactIds, artifactId);
+    if (nextState === "checkpointed") handoff.checkpointArtifactId = artifactId;
+  }
   handoff.transitions.push({ state: nextState, at: now });
   appendRelayStoreEvent(store, `handoff.${nextState}`, {
     sessionId: handoff.sessionId,
     generationId: handoff.generationId,
-    handoffId
+    handoffId,
+    artifactId
   });
   return handoff;
+}
+
+function rejectPlaintextArtifactFields(body) {
+  const metadataField = forbiddenArtifactMetadataField(body);
+  if (metadataField) {
+    throw relayHttpError(400, `artifact metadata contains plaintext-like field ${metadataField}`);
+  }
+}
+
+function forbiddenArtifactMetadataField(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = forbiddenArtifactMetadataField(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (!isRecord(value)) return "";
+  for (const [key, child] of Object.entries(value)) {
+    if (["plaintext", "plainText", "bundle", "payload", "files", "content"].includes(key)) return key;
+    const found = forbiddenArtifactMetadataField(child);
+    if (found) return found;
+  }
+  return "";
+}
+
+function artifactCiphertextRecord(value) {
+  if (!isRecord(value)) throw relayHttpError(400, "artifact ciphertext is required");
+  const algorithm = relayString(value.algorithm, "", 80);
+  const ciphertext = relayString(value.ciphertext, "", MAX_REQUEST_BODY_BYTES);
+  if (!algorithm || !ciphertext) throw relayHttpError(400, "artifact ciphertext requires algorithm and ciphertext");
+  return {
+    algorithm,
+    iv: relayString(value.iv, "", 500),
+    tag: relayString(value.tag, "", 500),
+    ciphertext,
+    size: Number.isFinite(Number(value.size)) ? Number(value.size) : undefined,
+    sha256: relayString(value.sha256, "", 200)
+  };
+}
+
+function artifactWrappedKeyRecord(value) {
+  if (!isRecord(value)) throw relayHttpError(400, "artifact wrapped key must be an object");
+  return {
+    recipientKid: relayString(value.recipientKid, "", 160),
+    algorithm: relayString(value.algorithm, "", 80),
+    ephemeralPublicKey: isRecord(value.ephemeralPublicKey)
+      ? {
+          kty: relayString(value.ephemeralPublicKey.kty, "", 20),
+          crv: relayString(value.ephemeralPublicKey.crv, "", 40),
+          x: relayString(value.ephemeralPublicKey.x, "", 500),
+          kid: relayString(value.ephemeralPublicKey.kid, "", 160)
+        }
+      : {},
+    iv: relayString(value.iv, "", 500),
+    tag: relayString(value.tag, "", 500),
+    ciphertext: relayString(value.ciphertext, "", MAX_REQUEST_BODY_BYTES)
+  };
+}
+
+function createCheckpointArtifact(store, body) {
+  rejectPlaintextArtifactFields(body);
+  const id = body.artifactId || body.id
+    ? relayId(body.artifactId ?? body.id, "artifactId")
+    : generatedRelayId("artifact");
+  const idempotencyKey = relayString(body.idempotencyKey, "", 160);
+  const existing = store.artifacts[id];
+  if (existing) {
+    if (idempotencyKey && existing.idempotencyKey === idempotencyKey) {
+      return { artifact: existing, idempotent: true };
+    }
+    throw relayHttpError(409, "artifact already exists");
+  }
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId", { required: false });
+  const type = relayString(body.type, "", 80);
+  if (type !== "checkpoint.bundle") throw relayHttpError(400, "artifact type must be checkpoint.bundle");
+  const metadata = portableRecord(body.metadata);
+  if (metadata.sessionId && metadata.sessionId !== sessionId) throw relayHttpError(400, "artifact metadata session mismatch");
+  if (generationId && metadata.generationId && metadata.generationId !== generationId) {
+    throw relayHttpError(400, "artifact metadata generation mismatch");
+  }
+  const wrappedKeys = Array.isArray(body.wrappedKeys) ? body.wrappedKeys.map(artifactWrappedKeyRecord) : [];
+  if (wrappedKeys.length === 0) throw relayHttpError(400, "artifact requires wrappedKeys");
+  const now = new Date().toISOString();
+  const artifact = {
+    id,
+    sessionId,
+    generationId,
+    type,
+    state: "available",
+    metadata,
+    encryption: portableRecord(body.encryption),
+    ciphertext: artifactCiphertextRecord(body.ciphertext),
+    wrappedKeys,
+    idempotencyKey,
+    createdAt: now,
+    updatedAt: now
+  };
+  store.artifacts[id] = artifact;
+  appendRelayStoreEvent(store, "artifact.created", {
+    sessionId,
+    generationId,
+    artifactId: id,
+    type
+  });
+  return { artifact, idempotent: false };
 }
 
 function appendSessionMessage(store, requestedSessionId, body) {
@@ -5057,6 +5178,36 @@ async function route(req, res) {
     const handoff = transitionPortableHandoff(store, decodeURIComponent(handoffRoute[1]), body);
     saveStore(store);
     sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/artifacts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { artifact, idempotent } = createCheckpointArtifact(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, artifact, idempotent });
+    return;
+  }
+
+  const artifactRoute = url.pathname.match(/^\/api\/artifacts\/([^/]+)$/);
+  if (artifactRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const artifactId = decodeURIComponent(artifactRoute[1]);
+    const store = loadStore();
+    const artifact = store.artifacts[artifactId];
+    if (!artifact) {
+      sendJson(res, 404, { ok: false, error: "artifact not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, artifact });
     return;
   }
 

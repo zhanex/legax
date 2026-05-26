@@ -51,7 +51,7 @@ Required formal domains:
 | `inbox` | Future normalized inbound items for relay routing and workflow orchestration. |
 | `commands` | Relay-owned command records created by phone, Telegram, Feishu/Lark, workflow actions, or desktop tools and executed only by eligible daemon hosts. |
 | `events` | Relay metadata event stream for append/update paths. This is separate from per-session agent-visible event queues. |
-| `artifacts` | Future artifact metadata generated or referenced by workflows. |
+| `artifacts` | Encrypted checkpoint artifact records generated or referenced by handoffs, forks, and workflows. |
 | `workflowDefinitions` | Future relay-side workflow definitions. |
 | `workflowRuns` | Future relay-side workflow run state. |
 
@@ -172,6 +172,8 @@ Lease state is one of `active`, `released`, `expired`, or `reclaimed`.
   "generationId": "gen_abc123",
   "fromHostId": "host-a",
   "toHostId": "host-b",
+  "checkpointArtifactId": "artifact_abc123",
+  "artifactIds": ["artifact_abc123"],
   "state": "requested",
   "transitions": [
     { "state": "requested", "at": "2026-05-26T00:00:00.000Z" }
@@ -182,7 +184,51 @@ Lease state is one of `active`, `released`, `expired`, or `reclaimed`.
 }
 ```
 
-`GET /api/handoffs/:id` reads the current handoff record. `POST /api/handoffs/:id/transition` accepts only the documented sequence: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. Retrying the same transition is idempotent and does not append a duplicate event. Each new transition appends a `handoff.<state>` metadata event so handoff progress remains auditable.
+`GET /api/handoffs/:id` reads the current handoff record. `POST /api/handoffs/:id/transition` accepts only the documented sequence: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. The `checkpointed` transition may carry an `artifactId`, which is stored as `checkpointArtifactId` and appended to `artifactIds` so the target host knows which encrypted checkpoint to fetch. Retrying the same transition is idempotent and does not append a duplicate event. Each new transition appends a `handoff.<state>` metadata event so handoff progress remains auditable.
+
+## Artifact Records
+
+Checkpoint artifacts are encrypted before upload. The relay stores ciphertext and metadata only:
+
+```json
+{
+  "id": "artifact_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "type": "checkpoint.bundle",
+  "state": "available",
+  "metadata": {
+    "schema": "legax.checkpoint/1",
+    "sessionId": "default",
+    "generationId": "gen_abc123",
+    "fileCount": 2
+  },
+  "encryption": {
+    "algorithm": "AES-256-GCM",
+    "keyWrap": "X25519-HKDF-SHA256+A256GCM"
+  },
+  "ciphertext": {
+    "algorithm": "AES-256-GCM",
+    "iv": "base64url",
+    "tag": "base64url",
+    "ciphertext": "base64url"
+  },
+  "wrappedKeys": [
+    {
+      "recipientKid": "host-key-1",
+      "algorithm": "X25519-HKDF-SHA256+A256GCM",
+      "ephemeralPublicKey": { "kty": "OKP", "crv": "X25519", "x": "base64url" },
+      "iv": "base64url",
+      "tag": "base64url",
+      "ciphertext": "base64url"
+    }
+  ],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+`POST /api/artifacts` rejects plaintext fields such as `plaintext`, `bundle`, `payload`, `files`, or `content`. `GET /api/artifacts/:id` returns the encrypted record so an authorized daemon can unwrap the data key locally and restore the checkpoint after validating paths and hashes.
 
 ## Host Records
 

@@ -93,7 +93,18 @@ relay 拥有的 portable sessions 使用以下桌面鉴权接口：
 
 受 lease 保护的写入使用两层 fence。`fencingToken` 在每个 generation 内单调递增，用于在 reclaim 后拒绝旧 owner。`leaseToken` 是返回给 active holder 的不透明 secret。过期 host、过期 fencing token 或过期 lease token 都会返回 `409`，且不会修改 generation。
 
-handoff transition 顺序为：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。fork 保持父 generation 不变，并通过 `baseGenerationId` 关联子 generation。
+handoff transition 顺序为：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。`checkpointed` transition 可以包含 `artifactId`，用于告诉接收 host 应该拉取哪个加密 checkpoint。fork 保持父 generation 不变，并通过 `baseGenerationId` 关联子 generation；创建 fork 时也可以通过子 generation 的 `checkpoint.artifactId` 携带 `artifactId`。
+
+## Checkpoint Artifacts
+
+checkpoint bundle 使用 `legax.checkpoint/1` schema。daemon 在本地创建 bundle，过滤不安全文件，用 AES-256-GCM 加密 JSON payload，并通过 X25519、HKDF-SHA256 和 AES-256-GCM 为已授权 daemon device 包装每个 artifact 的 data key。relay 不接收明文文件内容。
+
+桌面鉴权 artifact API：
+
+- `POST /api/artifacts`：保存加密 checkpoint artifact 记录。请求中如果包含 `plaintext`、`bundle`、`payload`、`files` 或 `content` 等明文字段，会被拒绝。
+- `GET /api/artifacts/:id`：读取加密 artifact metadata、ciphertext 和 wrapped keys。
+
+本地 bundle 创建默认排除 credential 文件、private key、database 文件、symlink、binary 文件、超大文件、绝对路径和路径穿越。restore 写入前会校验每个路径，拒绝 symlink escape，校验内容 hash，并且在调用方没有显式启用覆盖时拒绝覆盖有冲突的本地文件。device revoke 会阻止后续继续为该 device 包装 key；已经为该 key 包装过的历史 artifact 仍遵循既有信任模型，持有匹配 private key 的一方仍可读取。
 
 ## Worktree-Lite
 
