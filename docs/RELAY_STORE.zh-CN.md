@@ -285,6 +285,10 @@ definition 会拒绝禁止的可执行字段、重复 step id、未知内置 act
 
 ready step 会创建 relay command 记录，`commandRef` 从 `uses` 复制而来；daemon 仍必须在本地 command allowlist 中包含该 ref，才能 claim 这个 command。gate 等待会记录在 `gates` 中，同时以 `workflow_gate` 写入 `inbox`，方便各 transport 展示中立的审批项。
 
+内置 `lps-tdd` definition 由代码提供，不会预写入 store。它按顺序调度这些 step：`requirements`、`design_basic`、`design_detail`、`test_spec`、`red`、`review_red`、`green`、`review_green`、`refactor`、`run_check`、`self_review` 和 `pr_prepare`。`green` step 带有手动 before-gate，用于在 red verification 后让用户批准 implementation。会修改 workspace 的 step 会把当前 lease token 写入 relay command 记录；daemon 上报 terminal evidence 后，command result 路径才会推进 workflow step。
+
+Action contract 与 run state 分开暴露。每个 contract 都声明必需的 `inputs`、`outputs`、`evidence`，以及 `requiresLease`、`commandRefOnly`、`disabledByDefault`、`requiresGate`、`draftFirst` 等 policy 标志。因此 `pr.create` 是可选能力且默认禁用；默认 workflow 停在 `pr.prepare`。
+
 ## Host 记录
 
 daemon host 通过携带桌面端 relay secret 调用 `POST /api/hosts` 注册或刷新自身。relay 会把最新心跳持久化到 `hosts[hostId]`：

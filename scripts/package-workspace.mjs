@@ -10,6 +10,7 @@ const LIB_FILES = [
   "adapter-contract.mjs",
   "checkpoint-artifacts.mjs",
   "legax-protocol.mjs",
+  "lps-actions.mjs",
   "codex-features.mjs",
   "inbound-transports.mjs",
   "menu-groups.mjs",

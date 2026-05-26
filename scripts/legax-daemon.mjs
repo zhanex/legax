@@ -24,6 +24,7 @@ import {
   resolveRuntimeFile
 } from "./lib/paths.mjs";
 import { packageVersion } from "./lib/version.mjs";
+import { LPS_ACTION_IDS, executeLpsAction, lpsActionById } from "./lib/lps-actions.mjs";
 
 
 const DAEMON_AGENT = {
@@ -31,7 +32,7 @@ const DAEMON_AGENT = {
   agentLabel: "Legax Daemon",
   mode: "interactive"
 };
-const DAEMON_COMMAND_REFS = ["legax.ping", "agent.list", "legax.daemon.status"];
+const BASE_DAEMON_COMMAND_REFS = ["legax.ping", "agent.list", "legax.daemon.status"];
 
 validateAllAdapters(ADAPTERS);
 
@@ -531,10 +532,19 @@ function daemonHostGroups(config) {
   return normalized.length > 0 ? normalized : ["default"];
 }
 
-function commandPollUrl(transport, hostId) {
+function daemonCommandRefs(config) {
+  const refs = [
+    ...BASE_DAEMON_COMMAND_REFS,
+    ...LPS_ACTION_IDS.filter((actionId) => actionId !== "pr.create")
+  ];
+  if (config.daemon?.workflowPrCreateEnabled === true) refs.push("pr.create");
+  return refs;
+}
+
+function commandPollUrl(transport, hostId, commandRefs) {
   const url = new URL("/api/commands", transport.baseUrl);
   url.searchParams.set("hostId", hostId);
-  url.searchParams.set("commandRefs", DAEMON_COMMAND_REFS.join(","));
+  url.searchParams.set("commandRefs", commandRefs.join(","));
   return url;
 }
 
@@ -550,6 +560,7 @@ class RemoteRouter {
     this.timer = null;
     this.polling = false;
     this.hostId = daemonHostId(config);
+    this.commandRefs = daemonCommandRefs(config);
     this.lastHostHeartbeatByTransport = new Map();
     this.lastCommandPollByTransport = new Map();
   }
@@ -622,7 +633,7 @@ class RemoteRouter {
             autoStart: adapter.autoStart !== false,
             mode: adapter.mode
           })),
-          commandRefs: DAEMON_COMMAND_REFS,
+          commandRefs: this.commandRefs,
           groups: daemonHostGroups(this.config),
           ttlMs: nonNegativeNumber(this.config.daemon?.hostHeartbeatTtlMs, 30000)
         })
@@ -641,7 +652,7 @@ class RemoteRouter {
     this.lastCommandPollByTransport.set(key, now);
     let response;
     try {
-      response = await httpJson(commandPollUrl(transport, this.hostId), {
+      response = await httpJson(commandPollUrl(transport, this.hostId, this.commandRefs), {
         headers: this.relayHeaders(transport)
       }, Number(transport.timeoutMs ?? 15000));
     } catch (error) {
@@ -662,7 +673,7 @@ class RemoteRouter {
         headers: this.relayHeaders(transport),
         body: JSON.stringify({
           hostId: this.hostId,
-          commandRefs: DAEMON_COMMAND_REFS,
+          commandRefs: this.commandRefs,
           claimTtlMs: nonNegativeNumber(this.config.daemon?.commandClaimTtlMs, 30000)
         })
       }, Number(transport.timeoutMs ?? 15000));
@@ -714,6 +725,12 @@ class RemoteRouter {
         ...statusPayload(this.config)
       };
     }
+    if (lpsActionById(command.commandRef)) {
+      return executeLpsAction(command, {
+        hostId: this.hostId,
+        prCreateEnabled: this.config.daemon?.workflowPrCreateEnabled === true
+      });
+    }
     throw new Error(`unsupported relay commandRef: ${command.commandRef}`);
   }
 
@@ -725,6 +742,7 @@ class RemoteRouter {
         body: JSON.stringify({
           hostId: this.hostId,
           claimToken: command.claimToken,
+          leaseToken: command.leaseToken || undefined,
           ...body
         })
       }, Number(transport.timeoutMs ?? 15000));

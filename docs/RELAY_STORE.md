@@ -285,6 +285,10 @@ Definitions reject forbidden executable fields, duplicate step ids, unknown buil
 
 Ready steps create relay command records whose `commandRef` is copied from `uses`; daemons still need a matching local command allowlist before they can claim the command. Gate waits are recorded in `gates` and also as `workflow_gate` records under `inbox` so transports can surface a neutral approval item.
 
+The built-in `lps-tdd` definition is provided by code rather than persisted in the store. It schedules these steps in order: `requirements`, `design_basic`, `design_detail`, `test_spec`, `red`, `review_red`, `green`, `review_green`, `refactor`, `run_check`, `self_review`, and `pr_prepare`. The `green` step has a manual before-gate so a user can approve implementation after red verification. Mutating steps carry the active lease token into the relay command record, and the command result path advances the workflow step only after the daemon reports terminal evidence.
+
+Action contracts are exposed separately from run state. Each contract declares required `inputs`, `outputs`, `evidence`, and policy flags such as `requiresLease`, `commandRefOnly`, `disabledByDefault`, `requiresGate`, and `draftFirst`. `pr.create` is therefore optional and disabled by default; the default workflow stops at `pr.prepare`.
+
 ## Host Records
 
 Daemon hosts register or refresh themselves through `POST /api/hosts` with the desktop relay secret. Relay persists the latest heartbeat under `hosts[hostId]`:

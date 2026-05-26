@@ -52,6 +52,7 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 - `GET /api/artifacts/:id`
 - `POST /api/workflow-definitions`
 - `GET /api/workflow-definitions/:id`
+- `GET /api/workflow-actions`
 - `POST /api/workflow-runs`
 - `GET /api/workflow-runs/:id`
 - `POST /api/workflow-runs/:id/steps/:stepId/result`
@@ -132,7 +133,7 @@ Goal: centralize lifecycle and remote inbound routing.
 4. Relay owns Telegram `getUpdates` polling or `/api/telegram/events` webhooks and Feishu/Lark callbacks, then writes normalized actions into `/api/messages`.
 5. Daemon polls relay `/api/messages` and routes inbound messages to per-agent inbox queues.
 6. Daemon posts `/api/hosts` heartbeats with its host id, groups, enabled adapter metadata, and supported command refs.
-7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token.
+7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token. LPS TDD action commands are document/evidence oriented, never accept free-form shell strings from workflow definitions, and require a generation lease when the action may modify workspace files.
 8. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
 Completion: remote menu actions work even when a specific CLI adapter has not started yet, and the relay can observe daemon host liveness plus command queue progress.
@@ -315,6 +316,6 @@ Completion: remote target selection and message send both work again.
 - Permission requests always require an explicit remote decision and return through the CLI's native callback when that adapter supports one.
 - User-input requests can be answered remotely and unblock the waiting operation.
 - Sleeping adapters can be launched on demand by daemon-owned remote actions.
-- Daemons register as relay hosts, become offline when their heartbeat expires, and execute only known relay command refs with claim-token result reporting.
+- Daemons register as relay hosts, become offline when their heartbeat expires, and execute only known relay command refs with claim-token result reporting. `pr.create` is optional, disabled by default, and must remain draft-first.
 - Portable sessions, generations, leases, handoffs, and forks live in relay state; stale fencing tokens cannot mutate active generations.
 - Offline and auth failures provide a clear next action.
