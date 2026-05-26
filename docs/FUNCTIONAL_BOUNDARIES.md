@@ -24,8 +24,8 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 ## Data Ownership
 
 - `config.yaml`: local operator configuration. It is the source for relay URL, relay secret, Telegram bot token, Feishu/Lark app credentials, webhook URLs, and adapter settings.
-- `data/runtime-state.json`: daemon and adapter coordination state. It stores cursors, selected sessions, modes, inbox queues, and launch requests.
-- `data/relay-store.json`: relay state. It stores events, messages, paired browser devices, pairing codes, and optional audit entries.
+- `data/runtime-state.json`: daemon and adapter coordination state. It stores cursors, selected sessions, modes, inbox queues, and launch requests. It is local runtime coordination, not portable relay session truth.
+- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
 - `data/mcp-state.json`: generic MCP tool state.
 - CLI-native history: Codex, Claude Code, Gemini, and OpenCode own their own session history. Legax reads or resumes it through each CLI's supported interface.
 

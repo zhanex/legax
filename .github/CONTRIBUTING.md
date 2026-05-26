@@ -45,7 +45,7 @@ The three current adapters (Codex / Claude Code / Gemini CLI) live in `scripts/<
 3. Implement the adapter as a long-lived process: read `config.yaml`, hold one (or more) child CLI processes, translate inbound phone messages into the CLI's input format, translate the CLI's structured output into outbound transport events.
 4. Reuse the shared modules:
    - `scripts/lib/yaml.mjs` for config parsing.
-   - `scripts/lib/runtime-state.mjs` for cursors, modes, queues, and Telegram selections.
+   - `scripts/lib/runtime-state.mjs` for adapter coordination such as cursors, modes, queues, and Telegram selections.
    - `scripts/lib/outbound-transports.mjs` for sending events.
    - `scripts/lib/inbound-transports.mjs` for polling phone replies.
 5. Register the adapter in `scripts/legax-daemon.mjs`'s `ADAPTERS` array so the daemon can supervise it. Honor `autoStart`, `useExisting`, `mcpAutoConfigure` if applicable.

@@ -18,6 +18,8 @@ function optionValue(args, name, fallback = "") {
 const STANDALONE_CONFIG_PATH = "/etc/legax-relay/config.yaml";
 const STANDALONE_STORE_PATH = "/var/lib/legax-relay/relay-store.json";
 const STANDALONE_AUDIT_LOG_PATH = "/var/lib/legax-relay/relay-audit.jsonl";
+const RELAY_STORE_SCHEMA = "legax.relay/1";
+const RELAY_STORE_VERSION = 1;
 
 let CONFIG_PATH = "";
 let RAW_CONFIG = {};
@@ -40,6 +42,24 @@ const DEVICE_COOKIE = "legax_device";
 const DEVICE_TOKEN_BYTES = 32;
 const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
+const RELAY_STORE_OBJECT_DOMAINS = [
+  "sessions",
+  "generations",
+  "leases",
+  "hosts",
+  "devices",
+  "transports",
+  "inbox",
+  "commands",
+  "artifacts",
+  "workflowDefinitions",
+  "workflowRuns",
+  "pairingCodes",
+  "attentionAcks",
+  "twaLaunchTokens"
+];
+const RELAY_STORE_ARRAY_DOMAINS = ["events"];
+const RELAY_STORE_RENAME_RETRY_DELAYS_MS = [0, 10, 25, 50, 100];
 
 function standaloneConfigPath(args = [], env = process.env) {
   const requested = optionValue(args, "--config") || env.LEGAX_CONFIG || "";
@@ -118,30 +138,182 @@ function initializeRelayRuntime(options) {
 
 function loadStore() {
   if (!fs.existsSync(STORE_PATH)) {
-    const store = { version: 1, sessions: {} };
-    ensureStoreShape(store);
-    return store;
+    return ensureStoreShape(emptyRelayStore());
   }
-  const store = JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
-  ensureStoreShape(store);
-  return store;
+  let raw = "";
+  try {
+    raw = fs.readFileSync(STORE_PATH, "utf8");
+  } catch (error) {
+    throw new Error(`unable to read relay store at ${STORE_PATH}: ${error.message}`);
+  }
+  try {
+    return ensureStoreShape(JSON.parse(raw));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`invalid relay store JSON at ${STORE_PATH}: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 function saveStore(store) {
   ensureStoreShape(store);
   fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
-  const tmpPath = `${STORE_PATH}.${process.pid}.tmp`;
+  const tmpPath = `${STORE_PATH}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, STORE_PATH);
+  atomicReplaceFile(tmpPath, STORE_PATH);
 }
 
 function ensureStoreShape(store) {
-  if (!store || typeof store !== "object") return;
-  if (!store.sessions || typeof store.sessions !== "object") store.sessions = {};
-  if (!store.pairingCodes || typeof store.pairingCodes !== "object") store.pairingCodes = {};
-  if (!store.devices || typeof store.devices !== "object") store.devices = {};
-  if (!store.attentionAcks || typeof store.attentionAcks !== "object") store.attentionAcks = {};
-  if (!store.twaLaunchTokens || typeof store.twaLaunchTokens !== "object") store.twaLaunchTokens = {};
+  if (!isRecord(store)) {
+    throw new Error(`invalid relay store at ${STORE_PATH}: expected object`);
+  }
+  if (!store.schema) {
+    const legacyVersion = store.version == null ? RELAY_STORE_VERSION : Number(store.version);
+    if (!Number.isInteger(legacyVersion) || legacyVersion !== RELAY_STORE_VERSION) {
+      throw new Error(`unsupported legacy relay store version ${JSON.stringify(store.version)} at ${STORE_PATH}; expected ${RELAY_STORE_VERSION}`);
+    }
+    store.schema = RELAY_STORE_SCHEMA;
+  }
+  if (store.schema !== RELAY_STORE_SCHEMA) {
+    throw new Error(`unsupported relay store schema ${JSON.stringify(store.schema)} at ${STORE_PATH}; expected ${JSON.stringify(RELAY_STORE_SCHEMA)}`);
+  }
+  const version = store.version == null ? RELAY_STORE_VERSION : Number(store.version);
+  if (!Number.isInteger(version) || version !== RELAY_STORE_VERSION) {
+    throw new Error(`unsupported relay store version ${JSON.stringify(store.version)} at ${STORE_PATH}; expected ${RELAY_STORE_VERSION}`);
+  }
+  store.version = RELAY_STORE_VERSION;
+  for (const domain of RELAY_STORE_OBJECT_DOMAINS) {
+    if (store[domain] == null) {
+      store[domain] = {};
+    } else if (!isRecord(store[domain])) {
+      throw new Error(`invalid relay store domain "${domain}" at ${STORE_PATH}: expected object`);
+    }
+  }
+  for (const domain of RELAY_STORE_ARRAY_DOMAINS) {
+    if (store[domain] == null) {
+      store[domain] = [];
+    } else if (!Array.isArray(store[domain])) {
+      throw new Error(`invalid relay store domain "${domain}" at ${STORE_PATH}: expected array`);
+    }
+  }
+  for (const [sessionId, session] of Object.entries(store.sessions)) {
+    if (!isValidSessionId(sessionId)) {
+      throw new Error(`invalid relay store session id ${JSON.stringify(sessionId)} at ${STORE_PATH}`);
+    }
+    if (!isRecord(session)) {
+      throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: expected object`);
+    }
+    store.sessions[sessionId] = ensureSessionShape(session, sessionId);
+  }
+  return store;
+}
+
+function emptyRelayStore() {
+  return {
+    schema: RELAY_STORE_SCHEMA,
+    version: RELAY_STORE_VERSION,
+    sessions: {},
+    generations: {},
+    leases: {},
+    hosts: {},
+    devices: {},
+    transports: {},
+    inbox: {},
+    commands: {},
+    events: [],
+    artifacts: {},
+    workflowDefinitions: {},
+    workflowRuns: {},
+    pairingCodes: {},
+    attentionAcks: {},
+    twaLaunchTokens: {}
+  };
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function ensureSessionShape(session, sessionId) {
+  const record = session;
+  const now = new Date().toISOString();
+  record.id = sessionId;
+  if (!record.status || typeof record.status !== "string") record.status = "active";
+  if (!record.createdAt || typeof record.createdAt !== "string") record.createdAt = now;
+  if (!record.updatedAt || typeof record.updatedAt !== "string") record.updatedAt = record.createdAt;
+  if (record.currentGenerationId == null) record.currentGenerationId = "";
+  if (typeof record.currentGenerationId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: currentGenerationId must be a string`);
+  }
+  if (record.nativeSessions == null) record.nativeSessions = {};
+  if (!isRecord(record.nativeSessions)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: nativeSessions must be an object`);
+  }
+  if (record.events == null) record.events = [];
+  if (!Array.isArray(record.events)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: events must be an array`);
+  }
+  if (record.messages == null) record.messages = [];
+  if (!Array.isArray(record.messages)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: messages must be an array`);
+  }
+  record.nextEventSeq = nextSequence(record.events, record.nextEventSeq);
+  record.nextMessageSeq = nextSequence(record.messages, record.nextMessageSeq);
+  return record;
+}
+
+function nextSequence(items, currentValue) {
+  const maxSeq = items.reduce((max, item) => {
+    const seq = Number(item?.seq ?? 0);
+    return Number.isFinite(seq) && seq > max ? seq : max;
+  }, 0);
+  const current = Number(currentValue);
+  if (Number.isInteger(current) && current > maxSeq) return current;
+  return maxSeq + 1;
+}
+
+function safeSessionKey(value) {
+  const candidate = value ? String(value) : "";
+  if (isValidSessionId(candidate)) return candidate;
+  return isValidSessionId(DEFAULT_SESSION) ? DEFAULT_SESSION : "default";
+}
+
+function appendRelayStoreEvent(store, kind, details = {}) {
+  boundedPush(store.events, {
+    id: `relayevt_${crypto.randomBytes(10).toString("base64url")}`,
+    kind,
+    createdAt: new Date().toISOString(),
+    ...details
+  }, 1000);
+}
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // Retry delays only run after rare Windows rename collisions.
+  }
+}
+
+function atomicReplaceFile(tmpPath, targetPath) {
+  let lastError = null;
+  for (const delayMs of RELAY_STORE_RENAME_RETRY_DELAYS_MS) {
+    sleepSync(delayMs);
+    try {
+      fs.renameSync(tmpPath, targetPath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error.code)) break;
+    }
+  }
+  try {
+    fs.rmSync(tmpPath, { force: true });
+  } catch {
+    // Best effort cleanup only.
+  }
+  throw lastError;
 }
 
 // Zero-dependency QR encoder used by every relay entrypoint.
@@ -479,14 +651,9 @@ function readAuditTail(limit) {
 function getSession(store, sessionId) {
   // Reject session ids that don't match the safe charset to keep them out of
   // any future filesystem / log path use. Empty or invalid -> default.
-  const candidate = sessionId ? String(sessionId) : "";
-  const key = isValidSessionId(candidate) ? candidate : DEFAULT_SESSION;
-  store.sessions[key] ??= {
-    events: [],
-    messages: [],
-    nextEventSeq: 1,
-    nextMessageSeq: 1
-  };
+  const key = safeSessionKey(sessionId);
+  store.sessions[key] = ensureSessionShape(store.sessions[key] ?? {}, key);
+  store.sessions[key].updatedAt = new Date().toISOString();
   return [key, store.sessions[key]];
 }
 
@@ -3537,6 +3704,13 @@ async function route(req, res) {
       relativePath: body.relativePath ?? ""
     }, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
+    appendRelayStoreEvent(store, "session.message.appended", {
+      sessionId,
+      messageId: message.id,
+      messageSeq: message.seq,
+      targetAgentId: message.targetAgentId,
+      action: message.action ?? ""
+    });
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, requestId });
@@ -3564,6 +3738,13 @@ async function route(req, res) {
       projectPath: body.projectPath ?? ""
     }, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
+    appendRelayStoreEvent(store, "session.message.appended", {
+      sessionId,
+      messageId: message.id,
+      messageSeq: message.seq,
+      targetAgentId: message.targetAgentId,
+      action: message.action ?? ""
+    });
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, requestId });
@@ -3684,6 +3865,13 @@ async function route(req, res) {
     const [sessionId, session] = getSession(store, body.sessionId);
     const event = normalizeEvent(body, sessionId, session.nextEventSeq++);
     boundedPush(session.events, event);
+    appendRelayStoreEvent(store, "session.event.appended", {
+      sessionId,
+      eventId: event.id,
+      eventSeq: event.seq,
+      agentId: event.agentId,
+      eventKind: event.kind ?? ""
+    });
     saveStore(store);
     appendAudit("desktop->phone", event);
     sendJson(res, 200, { ok: true, event });
@@ -3710,6 +3898,13 @@ async function route(req, res) {
     const [sessionId, session] = getSession(store, url.searchParams.get("sessionId") ?? transport.sessionId);
     const message = normalizeMessage(messageBody, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
+    appendRelayStoreEvent(store, "session.message.appended", {
+      sessionId,
+      messageId: message.id,
+      messageSeq: message.seq,
+      targetAgentId: message.targetAgentId,
+      action: message.action ?? ""
+    });
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, message });
@@ -3788,6 +3983,13 @@ async function route(req, res) {
     const [sessionId, session] = getSession(store, body.sessionId);
     const message = normalizeMessage(body, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
+    appendRelayStoreEvent(store, "session.message.appended", {
+      sessionId,
+      messageId: message.id,
+      messageSeq: message.seq,
+      targetAgentId: message.targetAgentId,
+      action: message.action ?? ""
+    });
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, message });

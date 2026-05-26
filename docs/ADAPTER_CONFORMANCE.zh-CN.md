@@ -13,7 +13,7 @@
 - daemon 负责生命周期监督、远程入站路由和按需启动。
 - adapter 负责一个 CLI runtime 及其会话模型。
 - MCP 暴露能力工具；它不启动或停止 adapter 进程。
-- 跨进程状态归 `scripts/lib/runtime-state.mjs` 管理。
+- 跨进程 adapter 协同状态归 `scripts/lib/runtime-state.mjs` 管理；可迁移的 relay session 状态归 `legax.relay/1` relay store 管理。
 - 当 CLI 提供原生结构化 callback 时，审批决策必须走该路径。
 - fallback PTY 或 TUI 控制必须视为高信任远程终端控制。
 

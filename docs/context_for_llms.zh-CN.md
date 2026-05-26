@@ -14,6 +14,7 @@ Legax 是面向 AI 编码 Agent CLI 的 local-first 远程控制与 relay 层。
 - 能力平面：`scripts/mcp-server.mjs` 暴露 `legax_send`、`legax_poll`、`legax_request_permission` 和 `legax_status`。
 - 通信平面：`scripts/lib/outbound-transports.mjs`、`scripts/lib/inbound-transports.mjs`、relay server、Telegram 和 webhook。
 - 运行时状态：`scripts/lib/runtime-state.mjs` 是跨进程共享状态的唯一 owner。不要为 adapter 协调新增旁路状态文件。
+- Relay store：`data/relay-store.json` 使用 `legax.relay/1`，拥有可迁移 relay session 状态。它必须和 runtime-state 协同状态分开。
 - 配置格式：仅支持 YAML。使用 `scripts/lib/yaml.mjs`；不要随意引入 JSON config 支持或 YAML 依赖。
 
 ## 当前 Adapter 事实

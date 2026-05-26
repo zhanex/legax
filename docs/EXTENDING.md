@@ -13,10 +13,10 @@ An adapter is a **separate Node.js process** owned by the daemon. It owns:
 - The lifecycle of one CLI agent (spawn, restart, stop).
 - Translating phone messages → CLI input.
 - Translating CLI structured output → outbound transport events.
-- Maintaining its own per-agent runtime state via `scripts/lib/runtime-state.mjs`.
+- Maintaining its own per-agent runtime coordination state via `scripts/lib/runtime-state.mjs`.
 - Reporting errors and approvals through the relay or third-party transports.
 
-The adapter does **not** call into the daemon — communication is one-way (daemon supervises, adapter runs). Cross-process state is exchanged exclusively through `data/runtime-state.json`.
+The adapter does **not** call into the daemon — communication is one-way (daemon supervises, adapter runs). Cross-process adapter coordination state is exchanged exclusively through `data/runtime-state.json`. Do not use runtime state for portable relay-owned session truth; that belongs in the `legax.relay/1` relay store.
 
 ## Step-by-Step
 

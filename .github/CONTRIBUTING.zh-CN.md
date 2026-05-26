@@ -45,7 +45,7 @@
 3. Adapter 实现为常驻进程：读 `config.yaml`，持有一到多个 CLI 子进程，把入站手机消息翻译为 CLI 输入格式，把 CLI 结构化输出翻译为出站 transport 事件。
 4. 复用共享模块：
    - `scripts/lib/yaml.mjs` 解析配置。
-   - `scripts/lib/runtime-state.mjs` 处理游标、mode、队列、Telegram 选择。
+   - `scripts/lib/runtime-state.mjs` 处理 adapter 协同状态，例如游标、mode、队列、Telegram 选择。
    - `scripts/lib/outbound-transports.mjs` 发事件。
    - `scripts/lib/inbound-transports.mjs` 拉取手机回复。
 5. 在 `scripts/legax-daemon.mjs` 的 `ADAPTERS` 数组中注册，以便 daemon 监督。按需尊重 `autoStart`、`useExisting`、`mcpAutoConfigure`。

@@ -14,6 +14,7 @@ Legax is a local-first remote control and relay layer for AI coding-agent CLIs. 
 - Capability plane: `scripts/mcp-server.mjs` exposes `legax_send`, `legax_poll`, `legax_request_permission`, and `legax_status`.
 - Communication plane: `scripts/lib/outbound-transports.mjs`, `scripts/lib/inbound-transports.mjs`, the relay server, Telegram, and webhooks.
 - Runtime state: `scripts/lib/runtime-state.mjs` is the shared cross-process state file owner. Do not add a sibling state file for adapter coordination.
+- Relay store: `data/relay-store.json` uses `legax.relay/1` and owns portable relay session state. Keep it separate from runtime-state coordination.
 - Config format: YAML only. Use `scripts/lib/yaml.mjs`; do not introduce JSON config support or a YAML dependency casually.
 
 ## Current Adapter Facts

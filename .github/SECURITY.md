@@ -13,7 +13,7 @@ Legax bridges a desktop coding agent to a phone, including approval decisions fo
 | Self-hosted relay desktop secret | Anyone holding it can post events as the desktop or fetch phone replies | Constant-time compare; refusal to start without `relay.secret` set in `config.yaml` unless explicit `relay.allowInsecureDev: true`, in which case the relay binds to `127.0.0.1` only |
 | Paired browser device cookie | Anyone holding an active paired-device cookie can read relay traffic for that browser session and submit phone-side replies or approvals | Browser access is paired with daemon-generated one-time codes; device tokens are stored only as relay-secret-derived hashes and can be revoked from the relay device list |
 | Approval pipeline (Codex JSON-RPC, Claude permission MCP, Gemini approval mode) | Auto-approve of dangerous commands | Decisions are mirrored, never bypassed; `paused` and `monitor` modes hard-block phone approvals |
-| `data/` runtime files (runtime-state, relay-store, mcp-state, relay-audit) | Leak of conversation cursors, queued relay messages, and audit metadata | Local filesystem only; gitignored; should be on the same trust boundary as `config.yaml` |
+| `data/` runtime files (runtime-state, relay-store, mcp-state, relay-audit) | Leak of conversation cursors, queued relay messages, paired-device metadata, workflow metadata, and audit metadata | Local filesystem only; gitignored; should be on the same trust boundary as `config.yaml` |
 
 Out-of-scope (the project does not defend against these):
 

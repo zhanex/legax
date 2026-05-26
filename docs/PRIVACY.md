@@ -21,14 +21,14 @@ The software handles the following data on the operator's machine and in transit
 | Phone replies (text and approval decisions) | Phone client over relay, Telegram, or Feishu/Lark | Returned to the desktop agent |
 | Session metadata (session id, agent id, thread id, mode, cursors) | Local runtime state | Stored under `data/runtime-state.json`; included in transport payloads only as needed for routing |
 | Telegram bot token, Feishu/Lark app secret, Feishu/Lark verification token, relay secret, paired browser device cookie | Operator configuration and relay pairing | Third-party app credentials and relay secrets are stored inline in the operator's gitignored YAML config (`config.yaml` or `/etc/legax-relay/config.yaml`); paired browser device hashes are stored in the relay store and transmitted only to your relay as cookies |
-| Relay queues and audit metadata | Agent and phone traffic through the self-hosted relay | Stored in `relay.storePath` and, when audit is enabled, appended to `relay.audit.path`; audit records metadata and an optional short text preview, not full message bodies by default |
+| Relay queues, pairing state, and workflow metadata | Agent and phone traffic through the self-hosted relay | Stored in the `legax.relay/1` relay store at `relay.storePath` and, when audit is enabled, appended to `relay.audit.path`; audit records metadata and an optional short text preview, not full message bodies by default |
 
 The software **does not** transmit data to the project maintainers. There is no telemetry, analytics, crash reporter, or update beacon.
 
 ## Storage
 
 - Persistent daemon and MCP state is on the operator's local filesystem under `data/` by default (configurable via `runtimeStatePath` and `storagePath`).
-- The development relay stores event/message queues in `./data/relay-store.json` by default; the standalone relay stores them in `/var/lib/legax-relay/relay-store.json` by default. Both can be changed with `relay.storePath`.
+- The development relay stores its `legax.relay/1` store in `./data/relay-store.json` by default; the standalone relay stores it in `/var/lib/legax-relay/relay-store.json` by default. Both can be changed with `relay.storePath`.
 - Relay audit is append-only when enabled. It writes metadata to `relay.audit.path` and may include a configurable short `textPreview`; set `relay.audit.textPreview: 0` to omit previews.
 - Logs are not produced by default beyond what the daemon prints to stderr; if the operator redirects stderr to a file, that file may contain status lines and error stacks (no message bodies by default).
 
