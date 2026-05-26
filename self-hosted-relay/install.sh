@@ -63,11 +63,23 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_SRC="$SCRIPT_DIR/server.mjs"
+LIB_SRC_DIR="$SCRIPT_DIR/lib"
+RELAY_CORE_FILES=(
+  "relay-server-core.mjs"
+  "yaml.mjs"
+  "paths.mjs"
+)
 
 if [ ! -f "$SERVER_SRC" ]; then
   echo "server.mjs not found next to install.sh" >&2
   exit 1
 fi
+for core_file in "${RELAY_CORE_FILES[@]}"; do
+  if [ ! -f "$LIB_SRC_DIR/$core_file" ]; then
+    echo "relay core dependency not found: $LIB_SRC_DIR/$core_file" >&2
+    exit 1
+  fi
+done
 
 log() {
   printf '[legax-relay] %s\n' "$*"
@@ -162,9 +174,13 @@ random_secret() {
 install_files() {
   log "Installing relay files"
   install -d -m 0755 "$INSTALL_DIR"
+  install -d -m 0755 "$INSTALL_DIR/lib"
   install -d -m 0750 "$CONFIG_DIR"
   install -d -m 0750 "$DATA_DIR"
   install -m 0755 "$SERVER_SRC" "$INSTALL_DIR/server.mjs"
+  for core_file in "${RELAY_CORE_FILES[@]}"; do
+    install -m 0644 "$LIB_SRC_DIR/$core_file" "$INSTALL_DIR/lib/$core_file"
+  done
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
 
   config_file="$CONFIG_DIR/config.yaml"

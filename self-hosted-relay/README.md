@@ -66,6 +66,9 @@ sudo ./install.sh --no-node-install
 ## Installed Files
 
 - `/opt/legax-relay/server.mjs`
+- `/opt/legax-relay/lib/relay-server-core.mjs`
+- `/opt/legax-relay/lib/yaml.mjs`
+- `/opt/legax-relay/lib/paths.mjs`
 - `/etc/legax-relay/config.yaml` (host / port / secret / store path / audit settings — all inline)
 - `/var/lib/legax-relay/relay-store.json`
 - `/etc/systemd/system/legax-relay.service` on systemd systems

@@ -15,6 +15,7 @@ const LIB_FILES = [
   "outbound-transports.mjs",
   "paths.mjs",
   "project-browser.mjs",
+  "relay-server-core.mjs",
   "runtime-state.mjs",
   "version.mjs",
   "worktree-lite.mjs",
