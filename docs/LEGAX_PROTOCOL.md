@@ -106,6 +106,22 @@ Desktop-authenticated artifact APIs:
 
 Default local bundle creation excludes credential files, private keys, database files, symlinks, binary files, oversized files, absolute paths, and path traversal. Restore validates every path before writing, rejects symlink escapes, verifies content hashes, and refuses to overwrite conflicting local files unless the caller explicitly opts into overwrite behavior. Device revocation prevents future key wrapping for that device; historical artifacts already wrapped for that key remain readable by holders of the matching private key.
 
+## Restricted Workflows
+
+Workflow definitions use schema `legax.workflow/1`. The relay validates definitions before storing them: step ids must be unique, `needs` must form a DAG, `uses` must reference a known built-in action, and forbidden fields such as `shell`, `script`, `eval`, `prompt`, `command`, and free-form args are rejected. Definitions describe metadata, typed inputs and defaults, steps, gate policy, retry/timeout policy, artifact references, and required evidence.
+
+Desktop-authenticated workflow APIs:
+
+- `POST /api/workflow-definitions`: validate and register a restricted workflow definition.
+- `GET /api/workflow-definitions/:id`: read a definition.
+- `POST /api/workflow-runs`: create a run from a registered definition and schedule ready steps.
+- `GET /api/workflow-runs/:id`: read a run and refresh timeouts.
+- `POST /api/workflow-runs/:id/steps/:stepId/result`: record an idempotent step result, retry when policy allows, and schedule dependent steps.
+- `POST /api/workflow-runs/:id/gates/:stepId`: approve or deny a waiting gate.
+- `POST /api/workflow-runs/:id/cancel`: cancel a non-terminal run.
+
+The relay never executes workflow actions directly. A ready step creates a relay command with the step's `uses` value as `commandRef`; daemon hosts can claim it only if the command ref is present in their local allowlist. Gate waits are stored as transport-neutral `workflow_gate` inbox items and can be resumed through the gate endpoint.
+
 ## Worktree-Lite
 
 `legax worktree` exposes a small, local-only workflow:

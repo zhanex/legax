@@ -62,6 +62,28 @@ const GENERATION_STATES = new Set(["created", "active", "running", "checkpointed
 const LEASE_ACTIVE_STATES = new Set(["active"]);
 const HANDOFF_TRANSITIONS = ["requested", "checkpointed", "uploaded", "released", "claimed", "restored", "resumed"];
 const HANDOFF_TERMINAL_STATES = new Set(["resumed", "failed"]);
+const WORKFLOW_SCHEMA = "legax.workflow/1";
+const WORKFLOW_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired", "conflicted"]);
+const WORKFLOW_STEP_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired", "conflicted"]);
+const WORKFLOW_FORBIDDEN_FIELDS = new Set(["shell", "script", "eval", "javascript", "command", "commandString", "cmd", "args", "prompt", "promptTemplate"]);
+const WORKFLOW_BUILTIN_ACTIONS = new Set([
+  "legax.ping",
+  "agent.list",
+  "legax.daemon.status",
+  "requirements.capture",
+  "design.basic",
+  "design.detail",
+  "test.spec",
+  "tdd.red",
+  "tdd.review_red",
+  "tdd.green",
+  "tdd.review_green",
+  "tdd.refactor",
+  "workflow.run_check",
+  "review.self",
+  "pr.prepare",
+  "pr.create"
+]);
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
   "generations",
@@ -1601,6 +1623,485 @@ function createCheckpointArtifact(store, body) {
     type
   });
   return { artifact, idempotent: false };
+}
+
+function workflowForbiddenField(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = workflowForbiddenField(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (!isRecord(value)) return "";
+  for (const [key, child] of Object.entries(value)) {
+    if (WORKFLOW_FORBIDDEN_FIELDS.has(key)) return key;
+    const found = workflowForbiddenField(child);
+    if (found) return found;
+  }
+  return "";
+}
+
+function workflowStepNeeds(value) {
+  if (value == null) return [];
+  return relayStringList(value, 100);
+}
+
+function normalizedWorkflowStep(step) {
+  const id = relayId(step.id, "workflow step id");
+  const uses = relayId(step.uses, "workflow step uses");
+  if (!WORKFLOW_BUILTIN_ACTIONS.has(uses)) throw relayHttpError(400, `unknown workflow action ${uses}`);
+  const retry = portableRecord(step.retry);
+  const gate = portableRecord(step.gate);
+  return {
+    id,
+    uses,
+    needs: workflowStepNeeds(step.needs),
+    gate: Object.keys(gate).length > 0
+      ? {
+          before: gate.before !== false,
+          reason: relayString(gate.reason, "", 300),
+          policy: relayString(gate.policy, "manual", 80)
+        }
+      : null,
+    retry: {
+      maxAttempts: positiveInteger(retry.maxAttempts ?? step.maxAttempts, 1, { min: 1, max: 20 })
+    },
+    timeoutMs: positiveInteger(step.timeoutMs ?? step.timeout?.ms, COMMAND_CLAIM_TTL_MS, { min: 1, max: 24 * 60 * 60 * 1000 }),
+    artifacts: portableRecord(step.artifacts),
+    evidence: portableRecord(step.evidence)
+  };
+}
+
+function assertWorkflowDag(steps) {
+  const ids = new Set();
+  for (const step of steps) {
+    if (ids.has(step.id)) throw relayHttpError(400, `duplicate workflow step id ${step.id}`);
+    ids.add(step.id);
+  }
+  for (const step of steps) {
+    for (const dependency of step.needs) {
+      if (!ids.has(dependency)) throw relayHttpError(400, `workflow step ${step.id} needs unknown step ${dependency}`);
+    }
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  function visit(id) {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) throw relayHttpError(400, "workflow steps contain a cycle");
+    visiting.add(id);
+    for (const dependency of byId.get(id).needs) visit(dependency);
+    visiting.delete(id);
+    visited.add(id);
+  }
+  for (const step of steps) visit(step.id);
+}
+
+function normalizeWorkflowDefinition(body) {
+  const forbidden = workflowForbiddenField(body);
+  if (forbidden) throw relayHttpError(400, `workflow DSL field ${forbidden} is forbidden`);
+  const schema = relayString(body.schema ?? body.$schema, "", 80);
+  if (schema !== WORKFLOW_SCHEMA) throw relayHttpError(400, `workflow schema must be ${WORKFLOW_SCHEMA}`);
+  const id = relayId(body.id, "workflow definition id");
+  const steps = Array.isArray(body.steps) ? body.steps.map(normalizedWorkflowStep) : [];
+  if (steps.length === 0) throw relayHttpError(400, "workflow requires at least one step");
+  assertWorkflowDag(steps);
+  const now = new Date().toISOString();
+  return {
+    id,
+    schema,
+    version: relayString(body.version, "1.0.0", 80),
+    metadata: portableRecord(body.metadata),
+    inputs: portableRecord(body.inputs),
+    steps,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function registerWorkflowDefinition(store, body) {
+  const definition = normalizeWorkflowDefinition(body);
+  const existing = store.workflowDefinitions[definition.id];
+  if (existing?.createdAt) definition.createdAt = existing.createdAt;
+  definition.updatedAt = new Date().toISOString();
+  store.workflowDefinitions[definition.id] = definition;
+  appendRelayStoreEvent(store, "workflow.definition.upserted", {
+    workflowDefinitionId: definition.id,
+    stepCount: definition.steps.length
+  });
+  return definition;
+}
+
+function workflowInputDefaults(definition) {
+  const values = {};
+  for (const [key, spec] of Object.entries(portableRecord(definition.inputs))) {
+    if (isRecord(spec) && Object.prototype.hasOwnProperty.call(spec, "default")) values[key] = spec.default;
+  }
+  return values;
+}
+
+function workflowRunIdFromBody(body) {
+  return body.runId || body.id
+    ? relayId(body.runId ?? body.id, "workflow run id")
+    : generatedRelayId("wfrun");
+}
+
+function workflowStepRuntime(step) {
+  return {
+    id: step.id,
+    commandRef: step.uses,
+    needs: [...step.needs],
+    state: "pending",
+    attempts: 0,
+    maxAttempts: step.retry.maxAttempts,
+    timeoutMs: step.timeoutMs,
+    commandId: "",
+    timeoutAt: "",
+    result: null,
+    evidence: null,
+    error: null,
+    startedAt: "",
+    completedAt: ""
+  };
+}
+
+function createWorkflowRun(store, body) {
+  const definitionId = relayId(body.definitionId, "definitionId");
+  const definition = store.workflowDefinitions[definitionId];
+  if (!definition) throw relayHttpError(404, "workflow definition not found");
+  const runId = workflowRunIdFromBody(body);
+  if (store.workflowRuns[runId]) throw relayHttpError(409, "workflow run already exists");
+  const now = new Date().toISOString();
+  const steps = {};
+  for (const step of definition.steps) steps[step.id] = workflowStepRuntime(step);
+  const run = {
+    id: runId,
+    definitionId,
+    schema: WORKFLOW_SCHEMA,
+    sessionId: safeSessionKey(body.sessionId),
+    generationId: relayString(body.generationId, "", 160),
+    targetHostId: relayId(body.targetHostId, "targetHostId", { required: false }),
+    targetGroup: relayId(body.targetGroup, "targetGroup", { required: false }),
+    state: "pending",
+    inputs: {
+      ...workflowInputDefaults(definition),
+      ...portableRecord(body.inputs)
+    },
+    steps,
+    gates: {},
+    createdAt: now,
+    updatedAt: now,
+    completedAt: "",
+    error: null
+  };
+  store.workflowRuns[runId] = run;
+  appendRelayStoreEvent(store, "workflow.run.created", {
+    workflowRunId: run.id,
+    workflowDefinitionId: definitionId,
+    sessionId: run.sessionId
+  });
+  scheduleWorkflowRun(store, run);
+  return run;
+}
+
+function workflowDefinitionForRun(store, run) {
+  const definition = store.workflowDefinitions[run.definitionId];
+  if (!definition) throw relayHttpError(409, "workflow definition missing for run");
+  return definition;
+}
+
+function workflowStepDefinition(definition, stepId) {
+  return definition.steps.find((step) => step.id === stepId) ?? null;
+}
+
+function workflowDependenciesSucceeded(run, step) {
+  return step.needs.every((dependency) => run.steps[dependency]?.state === "succeeded");
+}
+
+function workflowInboxItemId(runId, stepId) {
+  return `workflow_gate_${runId}_${stepId}`;
+}
+
+function ensureWorkflowGate(store, run, stepDefinition) {
+  const now = new Date().toISOString();
+  const stepId = stepDefinition.id;
+  const inboxItemId = workflowInboxItemId(run.id, stepId);
+  const gate = run.gates[stepId] ?? {
+    stepId,
+    state: "waiting",
+    reason: stepDefinition.gate?.reason ?? "",
+    inboxItemId,
+    createdAt: now,
+    decidedAt: "",
+    decidedBy: ""
+  };
+  gate.state = gate.state || "waiting";
+  run.gates[stepId] = gate;
+  store.inbox[inboxItemId] ??= {
+    id: inboxItemId,
+    type: "workflow_gate",
+    action: "workflow.gate",
+    sessionId: run.sessionId,
+    workflowRunId: run.id,
+    stepId,
+    state: "waiting",
+    reason: gate.reason,
+    createdAt: now,
+    updatedAt: now
+  };
+  return gate;
+}
+
+function dispatchWorkflowStep(store, run, step, stepDefinition) {
+  const nowMs = Date.now();
+  const attempt = Number(step.attempts ?? 0) + 1;
+  const { command } = createRelayCommand(store, {
+    sessionId: run.sessionId,
+    commandRef: step.commandRef,
+    targetHostId: run.targetHostId,
+    targetGroup: run.targetGroup,
+    generationId: run.generationId,
+    idempotencyKey: `workflow:${run.id}:${step.id}:${attempt}`,
+    payload: {
+      workflowRunId: run.id,
+      workflowDefinitionId: run.definitionId,
+      stepId: step.id,
+      inputs: run.inputs,
+      artifacts: stepDefinition.artifacts,
+      evidence: stepDefinition.evidence
+    },
+    ttlMs: step.timeoutMs,
+    maxAttempts: 1
+  });
+  const now = isoFromMs(nowMs);
+  step.state = "running";
+  step.attempts = attempt;
+  step.commandId = command.id;
+  step.timeoutAt = isoFromMs(nowMs + step.timeoutMs);
+  step.startedAt = step.startedAt || now;
+  step.updatedAt = now;
+  step.error = null;
+  run.updatedAt = now;
+}
+
+function refreshWorkflowRunTimeouts(store, run) {
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return;
+  const definition = workflowDefinitionForRun(store, run);
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  for (const step of Object.values(run.steps)) {
+    if (step.state !== "running" || !step.timeoutAt || parseTimestampMs(step.timeoutAt) > nowMs) continue;
+    if (Number(step.attempts ?? 0) < Number(step.maxAttempts ?? 1)) {
+      step.state = "pending";
+      step.commandId = "";
+      step.timeoutAt = "";
+      step.error = { code: "timeout", message: "workflow step timed out; retrying" };
+      const stepDefinition = workflowStepDefinition(definition, step.id);
+      if (stepDefinition) dispatchWorkflowStep(store, run, step, stepDefinition);
+    } else {
+      step.state = "expired";
+      step.completedAt = now;
+      step.error = { code: "timeout", message: "workflow step timed out" };
+    }
+  }
+}
+
+function finishWorkflowStepCommand(store, step, state, body) {
+  if (!step?.commandId) return;
+  const command = store.commands[step.commandId];
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return;
+  const now = new Date().toISOString();
+  command.state = state === "conflicted" ? "failed" : state;
+  command.updatedAt = now;
+  command.completedAt = now;
+  command.result = body.result === undefined ? null : body.result;
+  command.error = body.error === undefined
+    ? null
+    : (isRecord(body.error) ? body.error : { message: String(body.error) });
+}
+
+function cancelWorkflowStepCommand(store, step, message = "workflow step cancelled") {
+  if (!step?.commandId) return;
+  const command = store.commands[step.commandId];
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return;
+  const now = new Date().toISOString();
+  command.state = "cancelled";
+  command.updatedAt = now;
+  command.completedAt = command.completedAt || now;
+  command.error = { code: "workflow_cancelled", message };
+}
+
+function cancelNonTerminalWorkflowSteps(store, run, message) {
+  const now = new Date().toISOString();
+  for (const step of Object.values(run.steps)) {
+    if (WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) continue;
+    cancelWorkflowStepCommand(store, step, message);
+    step.state = "cancelled";
+    step.completedAt = now;
+    step.updatedAt = now;
+    step.error ??= { code: "workflow_terminal", message };
+  }
+}
+
+function updateWorkflowRunState(store, run) {
+  const steps = Object.values(run.steps);
+  const now = new Date().toISOString();
+  if (steps.some((step) => step.state === "conflicted")) run.state = "conflicted";
+  else if (steps.some((step) => step.state === "expired")) run.state = "expired";
+  else if (steps.some((step) => step.state === "failed")) run.state = "failed";
+  else if (steps.some((step) => step.state === "cancelled")) run.state = "cancelled";
+  else if (steps.length > 0 && steps.every((step) => step.state === "succeeded")) run.state = "succeeded";
+  else if (steps.some((step) => step.state === "waiting_gate")) run.state = "waiting_gate";
+  else if (steps.some((step) => step.state === "running")) run.state = "running";
+  else if (steps.some((step) => step.state === "ready")) run.state = "ready";
+  else run.state = "pending";
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) {
+    run.completedAt ||= now;
+    if (run.state !== "succeeded") cancelNonTerminalWorkflowSteps(store, run, `workflow run ${run.state}`);
+  }
+  run.updatedAt = now;
+}
+
+function scheduleWorkflowRun(store, run) {
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  updateWorkflowRunState(store, run);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  refreshWorkflowRunTimeouts(store, run);
+  updateWorkflowRunState(store, run);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  const definition = workflowDefinitionForRun(store, run);
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const stepDefinition of definition.steps) {
+      const step = run.steps[stepDefinition.id];
+      if (!step || WORKFLOW_STEP_TERMINAL_STATES.has(step.state) || step.state === "running" || step.state === "waiting_gate") continue;
+      if (!workflowDependenciesSucceeded(run, step)) continue;
+      if (stepDefinition.gate?.before && run.gates[step.id]?.state !== "approved") {
+        ensureWorkflowGate(store, run, stepDefinition);
+        step.state = "waiting_gate";
+        step.updatedAt = new Date().toISOString();
+        progress = true;
+        continue;
+      }
+      dispatchWorkflowStep(store, run, step, stepDefinition);
+      progress = true;
+    }
+  }
+  updateWorkflowRunState(store, run);
+  return run;
+}
+
+function workflowRunOr404(store, runId) {
+  const run = store.workflowRuns[runId];
+  if (!run) throw relayHttpError(404, "workflow run not found");
+  return run;
+}
+
+function recordWorkflowStepResult(store, runId, stepId, body) {
+  const run = workflowRunOr404(store, runId);
+  const step = run.steps[stepId];
+  if (!step) throw relayHttpError(404, "workflow step not found");
+  const commandId = relayString(body.commandId, "", 160);
+  const state = relayString(body.state ?? body.status, "", 40);
+  if (!["succeeded", "failed", "cancelled", "conflicted"].includes(state)) {
+    throw relayHttpError(400, "workflow step result state is invalid");
+  }
+  if (WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) {
+    if (step.commandId === commandId && step.state === state) return { run, idempotent: true };
+    throw relayHttpError(409, `workflow step is ${step.state}`);
+  }
+  if (step.state !== "running") throw relayHttpError(409, `workflow step is ${step.state}`);
+  if (step.commandId !== commandId) throw relayHttpError(409, "stale workflow step command");
+  const now = new Date().toISOString();
+  finishWorkflowStepCommand(store, step, state, body);
+  if (state === "succeeded") {
+    step.state = "succeeded";
+    step.result = body.result ?? null;
+    step.evidence = body.evidence ?? null;
+    step.completedAt = now;
+    step.updatedAt = now;
+  } else if (state === "failed" && Number(step.attempts ?? 0) < Number(step.maxAttempts ?? 1)) {
+    step.state = "pending";
+    step.commandId = "";
+    step.timeoutAt = "";
+    step.error = body.error ?? { message: "workflow step failed; retrying" };
+    step.updatedAt = now;
+  } else {
+    step.state = state;
+    step.error = body.error ?? null;
+    step.result = body.result ?? null;
+    step.completedAt = now;
+    step.updatedAt = now;
+  }
+  scheduleWorkflowRun(store, run);
+  appendRelayStoreEvent(store, "workflow.step.completed", {
+    workflowRunId: run.id,
+    stepId,
+    state: step.state
+  });
+  return { run, idempotent: false };
+}
+
+function decideWorkflowGate(store, runId, stepId, body) {
+  const run = workflowRunOr404(store, runId);
+  const step = run.steps[stepId];
+  if (!step) throw relayHttpError(404, "workflow step not found");
+  const gate = run.gates[stepId];
+  if (!gate) throw relayHttpError(404, "workflow gate not found");
+  if (gate.state !== "waiting") return { run, idempotent: true };
+  const decision = relayString(body.decision, "", 40);
+  const now = new Date().toISOString();
+  if (decision === "approved" || decision === "approve") {
+    gate.state = "approved";
+    gate.decidedAt = now;
+    gate.decidedBy = relayString(body.decidedBy, "", 160);
+    const inboxItem = store.inbox[gate.inboxItemId];
+    if (inboxItem) {
+      inboxItem.state = "acknowledged";
+      inboxItem.updatedAt = now;
+    }
+    step.state = "pending";
+    step.updatedAt = now;
+    scheduleWorkflowRun(store, run);
+  } else if (decision === "denied" || decision === "deny") {
+    gate.state = "denied";
+    gate.decidedAt = now;
+    gate.decidedBy = relayString(body.decidedBy, "", 160);
+    step.state = "cancelled";
+    step.error = { code: "gate_denied", message: relayString(body.reason, "workflow gate denied", 300) };
+    step.completedAt = now;
+    const inboxItem = store.inbox[gate.inboxItemId];
+    if (inboxItem) {
+      inboxItem.state = "denied";
+      inboxItem.updatedAt = now;
+    }
+    updateWorkflowRunState(store, run);
+  } else {
+    throw relayHttpError(400, "workflow gate decision must be approved or denied");
+  }
+  return { run, idempotent: false };
+}
+
+function cancelWorkflowRun(store, runId, body) {
+  const run = workflowRunOr404(store, runId);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  const now = new Date().toISOString();
+  run.state = "cancelled";
+  run.completedAt = now;
+  run.error = { code: "cancelled", message: relayString(body.reason, "workflow run cancelled", 300) };
+  for (const step of Object.values(run.steps)) {
+    if (!WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) {
+      cancelWorkflowStepCommand(store, step, "workflow run cancelled");
+      step.state = "cancelled";
+      step.completedAt = now;
+      step.updatedAt = now;
+    }
+  }
+  run.updatedAt = now;
+  appendRelayStoreEvent(store, "workflow.run.cancelled", { workflowRunId: run.id });
+  return run;
 }
 
 function appendSessionMessage(store, requestedSessionId, body) {
@@ -5208,6 +5709,115 @@ async function route(req, res) {
       return;
     }
     sendJson(res, 200, { ok: true, artifact });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/workflow-definitions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const definition = registerWorkflowDefinition(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, definition });
+    return;
+  }
+
+  const workflowDefinitionRoute = url.pathname.match(/^\/api\/workflow-definitions\/([^/]+)$/);
+  if (workflowDefinitionRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const definitionId = decodeURIComponent(workflowDefinitionRoute[1]);
+    const store = loadStore();
+    const definition = store.workflowDefinitions[definitionId];
+    if (!definition) {
+      sendJson(res, 404, { ok: false, error: "workflow definition not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, definition });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/workflow-runs") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const run = createWorkflowRun(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  const workflowRunRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)(?:\/(.+))?$/);
+  if (workflowRunRoute && req.method === "GET" && !workflowRunRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const runId = decodeURIComponent(workflowRunRoute[1]);
+    const store = loadStore();
+    const run = workflowRunOr404(store, runId);
+    scheduleWorkflowRun(store, run);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  if (workflowRunRoute && req.method === "POST" && workflowRunRoute[2] === "cancel") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const run = cancelWorkflowRun(store, decodeURIComponent(workflowRunRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  const workflowStepResultRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)\/steps\/([^/]+)\/result$/);
+  if (workflowStepResultRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { run, idempotent } = recordWorkflowStepResult(
+      store,
+      decodeURIComponent(workflowStepResultRoute[1]),
+      decodeURIComponent(workflowStepResultRoute[2]),
+      body
+    );
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run, idempotent });
+    return;
+  }
+
+  const workflowGateRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)\/gates\/([^/]+)$/);
+  if (workflowGateRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { run, idempotent } = decideWorkflowGate(
+      store,
+      decodeURIComponent(workflowGateRoute[1]),
+      decodeURIComponent(workflowGateRoute[2]),
+      body
+    );
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run, idempotent });
     return;
   }
 

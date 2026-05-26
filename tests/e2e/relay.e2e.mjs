@@ -734,6 +734,317 @@ test("self-hosted relay stores checkpoint artifacts as ciphertext metadata only"
   assert.match(storeText, new RegExp(Buffer.from("ciphertext-not-plaintext").toString("base64url")));
 });
 
+test("self-hosted relay validates restricted workflow definitions", async (t) => {
+  const relay = await startRelay(t, { sessionId: "workflow-validation-e2e" });
+  const desktopHeaders = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+
+  const invalidDefinitions = [
+    {
+      id: "wf-shell",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [{ id: "unsafe", uses: "legax.ping", shell: "echo nope" }]
+    },
+    {
+      id: "wf-unknown-action",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [{ id: "unknown", uses: "shell.run" }]
+    },
+    {
+      id: "wf-duplicate",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [{ id: "same", uses: "legax.ping" }, { id: "same", uses: "agent.list" }]
+    },
+    {
+      id: "wf-missing-dep",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [{ id: "step-a", uses: "legax.ping", needs: ["missing"] }]
+    },
+    {
+      id: "wf-cycle",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [
+        { id: "step-a", uses: "legax.ping", needs: ["step-b"] },
+        { id: "step-b", uses: "agent.list", needs: ["step-a"] }
+      ]
+    }
+  ];
+
+  for (const definition of invalidDefinitions) {
+    await assert.rejects(
+      fetchJson(`${relay.baseUrl}/api/workflow-definitions`, {
+        method: "POST",
+        headers: desktopHeaders,
+        skipRelayCookie: true,
+        body: JSON.stringify(definition)
+      }),
+      { status: 400 }
+    );
+  }
+
+  const registered = await fetchJson(`${relay.baseUrl}/api/workflow-definitions`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      id: "wf-valid",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      metadata: { title: "Valid workflow" },
+      inputs: { issue: { type: "number", default: 27 } },
+      steps: [
+        { id: "capture", uses: "requirements.capture", timeoutMs: 1000 },
+        { id: "check", uses: "workflow.run_check", needs: ["capture"], evidence: { required: ["exitCode"] } }
+      ]
+    })
+  });
+  assert.equal(registered.definition.id, "wf-valid");
+  assert.deepEqual(registered.definition.steps.map((step) => step.id), ["capture", "check"]);
+
+  const fetched = await fetchJson(`${relay.baseUrl}/api/workflow-definitions/wf-valid`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(fetched.definition.schema, "legax.workflow/1");
+});
+
+test("self-hosted relay runs restricted workflows with command refs, gates, retries, timeouts, and cancellation", async (t) => {
+  const relay = await startRelay(t, { sessionId: "workflow-run-e2e" });
+  const desktopHeaders = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+  await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-workflow",
+      commandRefs: ["legax.ping", "agent.list"],
+      ttlMs: 5000
+    })
+  });
+
+  await fetchJson(`${relay.baseUrl}/api/workflow-definitions`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      id: "wf-runner",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [
+        { id: "prepare", uses: "legax.ping", retry: { maxAttempts: 2 }, timeoutMs: 5000, evidence: { required: ["ok"] } },
+        { id: "review", uses: "agent.list", needs: ["prepare"], gate: { before: true, reason: "human review" }, timeoutMs: 5000 }
+      ]
+    })
+  });
+
+  const created = await fetchJson(`${relay.baseUrl}/api/workflow-runs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      definitionId: "wf-runner",
+      sessionId: "workflow-run-e2e",
+      targetHostId: "host-workflow",
+      inputs: { issue: 27 }
+    })
+  });
+  assert.equal(created.run.state, "running");
+  assert.equal(created.run.steps.prepare.state, "running");
+  assert.equal(created.run.steps.prepare.commandRef, "legax.ping");
+  const firstCommandId = created.run.steps.prepare.commandId;
+  assert.ok(firstCommandId);
+
+  const failedOnce = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${created.run.id}/steps/prepare/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: firstCommandId,
+      state: "failed",
+      error: { message: "first attempt failed" }
+    })
+  });
+  assert.equal(failedOnce.run.steps.prepare.state, "running");
+  assert.equal(failedOnce.run.steps.prepare.attempts, 2);
+  assert.notEqual(failedOnce.run.steps.prepare.commandId, firstCommandId);
+  let workflowStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(workflowStore.commands[firstCommandId].state, "failed");
+
+  const prepared = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${created.run.id}/steps/prepare/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: failedOnce.run.steps.prepare.commandId,
+      state: "succeeded",
+      result: { ok: true },
+      evidence: { ok: true }
+    })
+  });
+  assert.equal(prepared.run.state, "waiting_gate");
+  assert.equal(prepared.run.steps.review.state, "waiting_gate");
+  assert.equal(prepared.run.gates.review.state, "waiting");
+  assert.ok(prepared.run.gates.review.inboxItemId);
+  const gateStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(gateStore.commands[failedOnce.run.steps.prepare.commandId].state, "succeeded");
+  assert.equal(gateStore.inbox[prepared.run.gates.review.inboxItemId].type, "workflow_gate");
+  assert.equal(gateStore.inbox[prepared.run.gates.review.inboxItemId].action, "workflow.gate");
+
+  const approved = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${created.run.id}/gates/review`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ decision: "approved", decidedBy: "tester" })
+  });
+  assert.equal(approved.run.state, "running");
+  assert.equal(approved.run.steps.review.state, "running");
+  assert.equal(approved.run.steps.review.commandRef, "agent.list");
+
+  const reviewed = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${created.run.id}/steps/review/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: approved.run.steps.review.commandId,
+      state: "succeeded",
+      result: { agents: [] }
+    })
+  });
+  assert.equal(reviewed.run.state, "succeeded");
+  workflowStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(workflowStore.commands[approved.run.steps.review.commandId].state, "succeeded");
+
+  const repeated = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${created.run.id}/steps/review/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: approved.run.steps.review.commandId,
+      state: "succeeded",
+      result: { agents: [] }
+    })
+  });
+  assert.equal(repeated.idempotent, true);
+  assert.equal(repeated.run.state, "succeeded");
+
+  await fetchJson(`${relay.baseUrl}/api/workflow-definitions`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      id: "wf-timeout",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [{ id: "slow", uses: "legax.ping", timeoutMs: 1, retry: { maxAttempts: 1 } }]
+    })
+  });
+  const timeoutRun = await fetchJson(`${relay.baseUrl}/api/workflow-runs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ definitionId: "wf-timeout", sessionId: "workflow-run-e2e", targetHostId: "host-workflow" })
+  });
+  await sleep(20);
+  const expired = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${timeoutRun.run.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(expired.run.state, "expired");
+  assert.equal(expired.run.steps.slow.state, "expired");
+
+  const deniedGateRun = await fetchJson(`${relay.baseUrl}/api/workflow-runs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ definitionId: "wf-runner", sessionId: "workflow-run-e2e", targetHostId: "host-workflow" })
+  });
+  const deniedPrepared = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${deniedGateRun.run.id}/steps/prepare/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: deniedGateRun.run.steps.prepare.commandId,
+      state: "succeeded",
+      result: { ok: true },
+      evidence: { ok: true }
+    })
+  });
+  const denied = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${deniedGateRun.run.id}/gates/review`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ decision: "denied", decidedBy: "tester", reason: "needs changes" })
+  });
+  assert.equal(denied.run.state, "cancelled");
+  assert.equal(denied.run.steps.review.state, "cancelled");
+  workflowStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(workflowStore.inbox[deniedPrepared.run.gates.review.inboxItemId].state, "denied");
+
+  const cancellable = await fetchJson(`${relay.baseUrl}/api/workflow-runs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ definitionId: "wf-runner", sessionId: "workflow-run-e2e", targetHostId: "host-workflow" })
+  });
+  const cancelled = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${cancellable.run.id}/cancel`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ reason: "test cancellation" })
+  });
+  assert.equal(cancelled.run.state, "cancelled");
+  assert.equal(cancelled.run.steps.prepare.state, "cancelled");
+  workflowStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(workflowStore.commands[cancellable.run.steps.prepare.commandId].state, "cancelled");
+
+  await fetchJson(`${relay.baseUrl}/api/workflow-definitions`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      id: "wf-fail-fast",
+      schema: "legax.workflow/1",
+      version: "1.0.0",
+      steps: [
+        { id: "first", uses: "legax.ping", timeoutMs: 5000 },
+        { id: "second", uses: "agent.list", timeoutMs: 5000 }
+      ]
+    })
+  });
+  const failFast = await fetchJson(`${relay.baseUrl}/api/workflow-runs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ definitionId: "wf-fail-fast", sessionId: "workflow-run-e2e", targetHostId: "host-workflow" })
+  });
+  assert.equal(failFast.run.steps.first.state, "running");
+  assert.equal(failFast.run.steps.second.state, "running");
+  const failedFast = await fetchJson(`${relay.baseUrl}/api/workflow-runs/${failFast.run.id}/steps/first/result`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandId: failFast.run.steps.first.commandId,
+      state: "failed",
+      error: { message: "hard failure" }
+    })
+  });
+  assert.equal(failedFast.run.state, "failed");
+  assert.equal(failedFast.run.steps.second.state, "cancelled");
+  workflowStore = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(workflowStore.commands[failFast.run.steps.second.commandId].state, "cancelled");
+});
+
 test("self-hosted relay migrates legacy relay store version 1 files", async (t) => {
   const relay = await startRelay(t, { sessionId: "legacy-store-e2e" });
   await fs.writeFile(relay.storePath, `${JSON.stringify({

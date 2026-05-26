@@ -52,8 +52,8 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
 | `commands` | relay 拥有的命令记录，可由手机、Telegram、飞书/Lark、workflow action 或桌面工具创建，只能由符合条件的 daemon host 执行。 |
 | `events` | relay metadata event stream，用于记录 append/update 路径。它和 per-session 的 Agent 可见 event 队列分开。 |
 | `artifacts` | 由 handoff、fork 和 workflow 生成或引用的加密 checkpoint artifact 记录。 |
-| `workflowDefinitions` | 未来 relay 侧 workflow 定义。 |
-| `workflowRuns` | 未来 relay 侧 workflow run 状态。 |
+| `workflowDefinitions` | relay 校验后的受限 `legax.workflow/1` workflow definition。 |
+| `workflowRuns` | relay 拥有的 workflow run、step、retry、timeout 和 gate 状态。 |
 
 当前 API 保留的兼容域：
 
@@ -229,6 +229,61 @@ checkpoint artifact 会在上传前完成加密。relay 只保存 ciphertext 和
 ```
 
 `POST /api/artifacts` 会拒绝 `plaintext`、`bundle`、`payload`、`files` 或 `content` 等明文字段。`GET /api/artifacts/:id` 返回加密记录，以便已授权 daemon 在本地解开 data key，并在校验路径和 hash 后恢复 checkpoint。
+
+## Workflow Definition 与 Run 记录
+
+workflow definition 只有通过 schema 校验后才会保存：
+
+```json
+{
+  "id": "lps-tdd",
+  "schema": "legax.workflow/1",
+  "version": "1.0.0",
+  "metadata": { "title": "Documented TDD" },
+  "inputs": { "issue": { "type": "number", "default": 0 } },
+  "steps": [
+    {
+      "id": "requirements",
+      "uses": "requirements.capture",
+      "needs": [],
+      "gate": null,
+      "retry": { "maxAttempts": 1 },
+      "timeoutMs": 30000,
+      "artifacts": {},
+      "evidence": {}
+    }
+  ],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+definition 会拒绝禁止的可执行字段、重复 step id、未知内置 action、缺失依赖和 cycle。run 会把 definition 展开为 step 状态：
+
+```json
+{
+  "id": "wfrun_abc123",
+  "definitionId": "lps-tdd",
+  "schema": "legax.workflow/1",
+  "sessionId": "default",
+  "state": "running",
+  "inputs": { "issue": 27 },
+  "steps": {
+    "requirements": {
+      "id": "requirements",
+      "commandRef": "requirements.capture",
+      "state": "running",
+      "attempts": 1,
+      "maxAttempts": 1,
+      "commandId": "cmd_abc123",
+      "timeoutAt": "2026-05-26T00:00:30.000Z"
+    }
+  },
+  "gates": {}
+}
+```
+
+ready step 会创建 relay command 记录，`commandRef` 从 `uses` 复制而来；daemon 仍必须在本地 command allowlist 中包含该 ref，才能 claim 这个 command。gate 等待会记录在 `gates` 中，同时以 `workflow_gate` 写入 `inbox`，方便各 transport 展示中立的审批项。
 
 ## Host 记录
 
