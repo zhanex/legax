@@ -66,6 +66,9 @@ sudo ./install.sh --no-node-install
 ## 安装后的文件
 
 - `/opt/legax-relay/server.mjs`
+- `/opt/legax-relay/lib/relay-server-core.mjs`
+- `/opt/legax-relay/lib/yaml.mjs`
+- `/opt/legax-relay/lib/paths.mjs`
 - `/etc/legax-relay/config.yaml`（host / port / secret / store 路径 / 审计设置——全部 inline）
 - `/var/lib/legax-relay/relay-store.json`
 - systemd 系统：`/etc/systemd/system/legax-relay.service`

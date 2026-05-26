@@ -54,7 +54,8 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
 
 3. Self-hosted relay
    - `scripts/simple-relay-server.mjs`
-   - Packaged by `self-hosted-relay/` for Linux installs.
+   - Shares HTTP, store, pairing, TWA, Feishu, and browser behavior through `scripts/lib/relay-server-core.mjs`.
+   - Packaged by `self-hosted-relay/` for Linux installs as a thin launcher plus the shared relay core files.
    - Provides desktop APIs, phone APIs, and a phone web page.
    - Routes inbound phone messages by `targetAgentId`.
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.

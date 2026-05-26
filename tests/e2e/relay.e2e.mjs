@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { fetchJson, pairRelayDevice, pluginRoot, startRelay, waitFor } from "./helpers.mjs";
@@ -6,6 +7,27 @@ import { fetchJson, pairRelayDevice, pluginRoot, startRelay, waitFor } from "./h
 async function pairBrowser(relay, { code = "482913", sessionId = relay.sessionId, label = "test phone" } = {}) {
   return pairRelayDevice(relay, { code, sessionId, label });
 }
+
+test("relay entrypoints delegate HTTP behavior to the shared relay core", async () => {
+  const devEntry = await fs.readFile(new URL("../../scripts/simple-relay-server.mjs", import.meta.url), "utf8");
+  const standaloneEntry = await fs.readFile(new URL("../../self-hosted-relay/server.mjs", import.meta.url), "utf8");
+
+  for (const [name, source] of [
+    ["developer relay", devEntry],
+    ["standalone relay", standaloneEntry]
+  ]) {
+    assert.match(source, /startRelayServer/, name);
+    assert.doesNotMatch(source, /async function route\b/, name);
+    assert.doesNotMatch(source, /function normalizeMessage\b/, name);
+    assert.doesNotMatch(source, /function createPairingCode\b/, name);
+  }
+
+  for (const file of ["relay-server-core.mjs", "yaml.mjs", "paths.mjs"]) {
+    const source = await fs.readFile(new URL(`../../scripts/lib/${file}`, import.meta.url), "utf8");
+    const standaloneCopy = await fs.readFile(new URL(`../../self-hosted-relay/lib/${file}`, import.meta.url), "utf8");
+    assert.equal(standaloneCopy, source, `${file} copied into self-hosted relay`);
+  }
+});
 
 test("self-hosted relay supports authenticated desktop and phone flows", async (t) => {
   const relay = await startRelay(t, { sessionId: "relay-e2e" });

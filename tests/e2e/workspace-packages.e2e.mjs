@@ -156,6 +156,54 @@ transports: []
     const health = await fetchJson(`http://127.0.0.1:${port}/health`, { skipRelayCookie: true });
     assert.equal(health.ok, true);
   }, { timeoutMs: 7000 });
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await fetchJson(`${baseUrl}/api/pairing-codes`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": "relay-workspace-secret"
+    },
+    body: JSON.stringify({ code: "246810", sessionId: "relay-workspace-e2e", expiresInMs: 300000 }),
+    skipRelayCookie: true
+  });
+
+  const pairResponse = await fetch(`${baseUrl}/api/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "246810", label: "package relay browser" })
+  });
+  assert.equal(pairResponse.status, 200);
+  const cookie = pairResponse.headers.get("set-cookie").split(";")[0];
+
+  await fetchJson(`${baseUrl}/api/events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": "relay-workspace-secret"
+    },
+    body: JSON.stringify({ sessionId: "relay-workspace-e2e", kind: "status", text: "package event" }),
+    skipRelayCookie: true
+  });
+  const events = await fetchJson(`${baseUrl}/api/events?sessionId=relay-workspace-e2e&after=0`, {
+    headers: { cookie },
+    skipRelayCookie: true
+  });
+  assert.deepEqual(events.events.map((event) => event.text), ["package event"]);
+
+  await fetchJson(`${baseUrl}/api/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie
+    },
+    body: JSON.stringify({ sessionId: "relay-workspace-e2e", targetAgentId: "codex-cli", type: "text", text: "package message" }),
+    skipRelayCookie: true
+  });
+  const messages = await fetchJson(`${baseUrl}/api/messages?sessionId=relay-workspace-e2e&after=0&agentId=codex-cli`, {
+    headers: { "x-legax-secret": "relay-workspace-secret" },
+    skipRelayCookie: true
+  });
+  assert.deepEqual(messages.messages.map((message) => message.text), ["package message"]);
   assert.match(stderr, /Legax relay listening/);
 });
 

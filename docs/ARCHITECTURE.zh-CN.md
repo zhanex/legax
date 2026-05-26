@@ -54,7 +54,8 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
 
 3. 自部署 relay
    - `scripts/simple-relay-server.mjs`
-   - 由 `self-hosted-relay/` 打包为 Linux 安装器。
+   - 通过 `scripts/lib/relay-server-core.mjs` 共享 HTTP、store、配对、TWA、飞书和浏览器行为。
+   - 由 `self-hosted-relay/` 打包为 Linux 安装器，安装薄启动器和共享 relay core 文件。
    - 提供桌面端 API、手机端 API 和手机网页。
    - 按 `targetAgentId` 路由手机入站消息。
    - 将 relay 状态保存到 `relay.storePath`；开发用 relay 默认是 `./data/relay-store.json`，独立部署 relay 默认是 `/var/lib/legax-relay/relay-store.json`。
