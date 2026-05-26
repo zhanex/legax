@@ -4,6 +4,14 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { readYaml } from "./yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./paths.mjs";
+import {
+  parseTelegramUpdate,
+  telegramApiUrl,
+  telegramTransportKey,
+  telegramUpdateChatId,
+  telegramUpdateId
+} from "./telegram-transport.mjs";
+import { sendTelegramEvent } from "./outbound-transports.mjs";
 
 function optionValue(args, name, fallback = "") {
   const prefix = `${name}=`;
@@ -34,6 +42,8 @@ let AUDIT_DISABLED = false;
 let AUDIT_LOG_PATH = "";
 let AUDIT_MAX_TAIL = 1000;
 let AUDIT_TEXT_PREVIEW = 80;
+let TELEGRAM_POLL_TIMERS = [];
+const TELEGRAM_ACTIVE_POLLS = new Set();
 
 const BROADCAST_TARGETS = new Set(["*", "all", "broadcast"]);
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -286,6 +296,34 @@ function appendRelayStoreEvent(store, kind, details = {}) {
     createdAt: new Date().toISOString(),
     ...details
   }, 1000);
+}
+
+async function httpJson(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...(options.body ? { "content-type": "application/json" } : {}),
+        ...(options.headers ?? {})
+      }
+    });
+    const text = await response.text();
+    let body = {};
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { text };
+      }
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function sleepSync(ms) {
@@ -710,9 +748,250 @@ function normalizeMessage(body, sessionId, seq) {
   };
 }
 
+function appendSessionMessage(store, requestedSessionId, body) {
+  const [sessionId, session] = getSession(store, requestedSessionId);
+  const message = normalizeMessage(body, sessionId, session.nextMessageSeq++);
+  boundedPush(session.messages, message);
+  appendRelayStoreEvent(store, "session.message.appended", {
+    sessionId,
+    messageId: message.id,
+    messageSeq: message.seq,
+    targetAgentId: message.targetAgentId,
+    action: message.action ?? ""
+  });
+  return { sessionId, message };
+}
+
 function enabledFeishuTransports() {
   return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
     .filter((transport) => transport?.enabled !== false && transport?.type === "feishu");
+}
+
+function enabledTelegramTransports() {
+  return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
+    .filter((transport) => transport?.enabled !== false && transport?.type === "telegram");
+}
+
+function telegramTransportFromRequest(url) {
+  const name = url.searchParams.get("transport");
+  const transports = enabledTelegramTransports();
+  if (name) return transports.find((transport) => String(transport.name ?? "telegram") === name);
+  return transports[0];
+}
+
+function telegramPollerAgentId(transport) {
+  return String(
+    transport?.pollerAgentId
+      ?? RAW_CONFIG.routing?.telegramPollerAgentId
+      ?? "legax-daemon"
+  );
+}
+
+function telegramDefaultTarget(transport, state) {
+  if (state.selection?.targetAgentId) return String(state.selection.targetAgentId);
+  const configured = transport?.defaultTarget ?? RAW_CONFIG.routing?.defaultTarget;
+  if (!configured || configured === "none") return "";
+  if (configured === "self") return "legax-daemon";
+  return String(configured);
+}
+
+function telegramTransportState(store, transport) {
+  const key = telegramTransportKey(transport);
+  const existing = store.transports[key];
+  if (existing == null) {
+    store.transports[key] = {
+      type: "telegram",
+      name: String(transport.name ?? "telegram"),
+      offset: 0,
+      seen: {},
+      selection: {}
+    };
+  } else if (!isRecord(existing)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: expected object`);
+  }
+  const state = store.transports[key];
+  state.type = "telegram";
+  state.name = String(transport.name ?? "telegram");
+  if (!Number.isFinite(Number(state.offset))) state.offset = 0;
+  state.offset = Math.max(0, Math.trunc(Number(state.offset)));
+  if (state.seen == null) state.seen = {};
+  if (!isRecord(state.seen)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: seen must be an object`);
+  }
+  if (state.selection == null) state.selection = {};
+  if (!isRecord(state.selection)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: selection must be an object`);
+  }
+  return [key, state];
+}
+
+function telegramChatAllowed(transport, chatId) {
+  return String(chatId) === String(transport.chatId);
+}
+
+function rememberTelegramUpdate(state, dedupeId) {
+  state.seen[dedupeId] = true;
+  const entries = Object.keys(state.seen);
+  const maxSeen = Math.max(1, Number(state.maxSeen ?? 500));
+  if (entries.length <= maxSeen) return;
+  for (const key of entries.slice(0, entries.length - maxSeen)) {
+    delete state.seen[key];
+  }
+}
+
+function updateTelegramSelectionFromMessage(state, message) {
+  if (message.type !== "control") return;
+  if (message.action === "list_agent_projects") {
+    state.selection.targetAgentId = message.targetAgentId;
+  }
+  if (message.action === "list_agent_sessions") {
+    state.selection.targetAgentId = message.targetAgentId;
+    state.selection.selectedProjectRef = message.projectRef ?? "";
+  }
+  if (message.action === "select_session") {
+    state.selection.targetAgentId = message.targetAgentId;
+    state.selection.selectedThreadId = message.threadRef ?? "";
+  }
+}
+
+function processTelegramUpdateInStore(store, transport, update, { sessionId: requestedSessionId } = {}) {
+  const updateId = telegramUpdateId(update);
+  const callbackId = String(update?.callback_query?.id ?? "");
+  if (updateId == null) return { ignored: true, reason: "missing update id" };
+  const dedupeId = `telegram:${updateId}`;
+  const [, state] = telegramTransportState(store, transport);
+  if (state.seen[dedupeId]) {
+    return { duplicate: true, callbackId };
+  }
+  if (!telegramChatAllowed(transport, telegramUpdateChatId(update))) {
+    rememberTelegramUpdate(state, dedupeId);
+    return { ignored: true, reason: "chat not allowed", callbackId, changed: true };
+  }
+  const messageBody = parseTelegramUpdate(update, {
+    targetAgentId: telegramDefaultTarget(transport, state),
+    pollerAgentId: telegramPollerAgentId(transport)
+  });
+  if (!messageBody) {
+    rememberTelegramUpdate(state, dedupeId);
+    return { ignored: true, reason: "unsupported update", callbackId, changed: true };
+  }
+  const { message } = appendSessionMessage(store, requestedSessionId ?? transport.sessionId, messageBody);
+  rememberTelegramUpdate(state, dedupeId);
+  updateTelegramSelectionFromMessage(state, message);
+  return { message, callbackId, changed: true };
+}
+
+async function answerTelegramCallback(transport, callbackId, text = "") {
+  if (!callbackId) return;
+  const token = transport.botToken;
+  if (!token) return;
+  const body = { callback_query_id: callbackId };
+  if (text) body.text = text;
+  await httpJson(telegramApiUrl(transport, token, "answerCallbackQuery"), {
+    method: "POST",
+    body: JSON.stringify(body)
+  }, Number(transport.timeoutMs ?? 15000));
+}
+
+function verifyTelegramWebhook(req, url, transport) {
+  const expected = String(transport?.webhookSecret ?? transport?.secretToken ?? "");
+  if (expected) {
+    return safeEqual(req.headers["x-telegram-bot-api-secret-token"] || "", expected);
+  }
+  return requireDesktop(req, url);
+}
+
+function telegramPollIntervalMs(transport) {
+  return Math.max(100, Number(transport.pollIntervalMs ?? RAW_CONFIG.relay?.telegramPollIntervalMs ?? 1000));
+}
+
+async function pollTelegramTransport(transport) {
+  const token = transport.botToken;
+  const chatId = transport.chatId;
+  if (!token || !chatId) return;
+  const key = telegramTransportKey(transport);
+  if (TELEGRAM_ACTIVE_POLLS.has(key)) return;
+  TELEGRAM_ACTIVE_POLLS.add(key);
+  const callbacksToAck = [];
+  const messagesToAudit = [];
+  try {
+    const initialStore = loadStore();
+    const [, initialState] = telegramTransportState(initialStore, transport);
+    const requestOffset = initialState.offset;
+    const response = await httpJson(telegramApiUrl(transport, token, "getUpdates"), {
+      method: "POST",
+      body: JSON.stringify({
+        offset: requestOffset || undefined,
+        timeout: 0,
+        limit: 20,
+        allowed_updates: ["message", "edited_message", "callback_query"]
+      })
+    }, Number(transport.timeoutMs ?? 15000));
+    if (!Array.isArray(response.result) || response.result.length === 0) return;
+    const store = loadStore();
+    const [, state] = telegramTransportState(store, transport);
+    const beforeOffset = state.offset;
+    let changed = false;
+    for (const update of response.result) {
+      const updateId = telegramUpdateId(update);
+      if (updateId != null) {
+        state.offset = Math.max(state.offset, updateId + 1);
+      }
+      const result = processTelegramUpdateInStore(store, transport, update, {
+        sessionId: transport.sessionId
+      });
+      changed = changed || result.changed === true;
+      if (result.callbackId) callbacksToAck.push(result.callbackId);
+      if (result.message) messagesToAudit.push(result.message);
+    }
+    if (changed || state.offset !== beforeOffset) {
+      saveStore(store);
+    }
+  } finally {
+    TELEGRAM_ACTIVE_POLLS.delete(key);
+  }
+  for (const message of messagesToAudit) {
+    appendAudit("phone->desktop", message);
+  }
+  for (const callbackId of callbacksToAck) {
+    answerTelegramCallback(transport, callbackId).catch((error) => {
+      console.error(`[relay] telegram callback ack failed for ${transport.name ?? "telegram"}: ${error.message}`);
+    });
+  }
+}
+
+function stopRelayTelegramPollers() {
+  for (const timer of TELEGRAM_POLL_TIMERS) clearInterval(timer);
+  TELEGRAM_POLL_TIMERS = [];
+}
+
+function startRelayTelegramPollers(server) {
+  stopRelayTelegramPollers();
+  for (const transport of enabledTelegramTransports()) {
+    if (transport.polling === false || transport.webhookOnly === true) continue;
+    const timer = setInterval(() => {
+      pollTelegramTransport(transport).catch((error) => {
+        console.error(`[relay] telegram poll failed for ${transport.name ?? "telegram"}: ${error.message}`);
+      });
+    }, telegramPollIntervalMs(transport));
+    TELEGRAM_POLL_TIMERS.push(timer);
+  }
+  server.once("close", stopRelayTelegramPollers);
+}
+
+async function dispatchRelayTelegramEvent(event) {
+  const results = [];
+  for (const transport of enabledTelegramTransports()) {
+    if (transport.outbound === false || transport.sendEvents === false) continue;
+    try {
+      const result = await sendTelegramEvent(RAW_CONFIG, transport, event);
+      results.push({ transport: transport.name ?? "telegram", type: "telegram", ok: true, result });
+    } catch (error) {
+      results.push({ transport: transport.name ?? "telegram", type: "telegram", ok: false, error: error.message });
+      console.error(`[relay] telegram outbound failed for ${transport.name ?? "telegram"}: ${error.message}`);
+    }
+  }
+  return results;
 }
 
 function feishuTransportFromRequest(url) {
@@ -980,7 +1259,7 @@ function sendJson(res, status, body, extraHeaders = {}) {
     "cache-control": "no-store",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-    "access-control-allow-headers": "content-type,x-legax-secret",
+    "access-control-allow-headers": "content-type,x-legax-secret,x-telegram-bot-api-secret-token",
     ...extraHeaders
   });
   res.end(JSON.stringify(body));
@@ -3874,7 +4153,8 @@ async function route(req, res) {
     });
     saveStore(store);
     appendAudit("desktop->phone", event);
-    sendJson(res, 200, { ok: true, event });
+    const outbound = await dispatchRelayTelegramEvent(event);
+    sendJson(res, 200, { ok: true, event, outbound });
     return;
   }
 
@@ -3908,6 +4188,37 @@ async function route(req, res) {
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, message });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/telegram/events") {
+    const body = await readJsonBody(req);
+    const transport = telegramTransportFromRequest(url);
+    if (!transport || !verifyTelegramWebhook(req, url, transport)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const result = processTelegramUpdateInStore(store, transport, body, {
+      sessionId: url.searchParams.get("sessionId") ?? transport.sessionId
+    });
+    if (result.changed) saveStore(store);
+    if (result.callbackId) {
+      answerTelegramCallback(transport, result.callbackId).catch((error) => {
+        console.error(`[relay] telegram callback ack failed for ${transport.name ?? "telegram"}: ${error.message}`);
+      });
+    }
+    if (result.message) {
+      appendAudit("phone->desktop", result.message);
+      sendJson(res, 200, { ok: true, message: result.message });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      ignored: result.ignored === true,
+      duplicate: result.duplicate === true,
+      reason: result.reason
+    });
     return;
   }
 
@@ -4042,12 +4353,14 @@ async function route(req, res) {
 
 export function createRelayServer(options = {}) {
   initializeRelayRuntime(options);
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     route(req, res).catch((error) => {
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
       sendJson(res, status, { ok: false, error: error.message });
     });
   });
+  startRelayTelegramPollers(server);
+  return server;
 }
 
 export function startRelayServer(options = {}) {

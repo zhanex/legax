@@ -17,7 +17,7 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 - Daemon: supervises enabled CLI adapters, polls inbound transports, routes messages, and creates on-demand launch requests.
 - Adapter: owns one CLI process and one session model. It lists projects/sessions, starts or resumes sessions, sends text into the CLI, parses structured output, and mirrors native approval requests when the CLI exposes a supported callback.
 - Relay: stores events, inbound messages, pairing codes, paired devices, and audit entries for one or more `sessionId` values.
-- Telegram transport: formats outbound notifications and turns inbound messages or callback buttons into the same message model used by the relay.
+- Telegram transport: formats outbound notifications and, when relay is enabled, lets the relay turn inbound messages or callback buttons into the same message model used by the browser UI.
 - Feishu/Lark transport: formats outbound app-bot notifications and lets the relay turn event callbacks into the same message model used by the browser UI.
 - MCP server: exposes notification, polling, and permission tools. It never starts or stops CLI processes.
 
@@ -100,8 +100,8 @@ Goal: centralize lifecycle and remote inbound routing.
 1. Operator starts `node scripts/legax-daemon.mjs` or the project daemon script.
 2. Daemon reads `config.yaml`, validates adapter contracts, and prints a redaction-safe transport summary.
 3. Daemon starts adapters with `autoStart: true`.
-4. Daemon polls relay `/api/messages` and Telegram `getUpdates`; Feishu/Lark callbacks enter the relay and then reuse `/api/messages`.
-5. Daemon routes inbound messages to per-agent inbox queues.
+4. Relay owns Telegram `getUpdates` polling or `/api/telegram/events` webhooks and Feishu/Lark callbacks, then writes normalized actions into `/api/messages`.
+5. Daemon polls relay `/api/messages` and routes inbound messages to per-agent inbox queues.
 6. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
 Completion: remote menu actions work even when a specific CLI adapter has not started yet.
@@ -173,12 +173,14 @@ Goal: provide the same target-selection and action loop without requiring the br
 Primary button flow:
 
 1. User sends `/start`.
-2. Bot replies with enabled CLI buttons.
-3. User taps a CLI button. Daemon starts the adapter when needed and replies with project/chat buttons.
-4. User taps a project/chat button. Adapter replies with session buttons scoped to that project/chat. Archived sessions are excluded. Sessions without project metadata are shown under **Chats**; Claude cwd-only sessions are also available under **Chats**; Codex app-server sessions are shown under **Chats** unless explicit project metadata is present; OpenCode sessions use cwd/project metadata when the server returns it. If more than 10 sessions match, the reply includes **Previous** / **Next** page buttons.
-5. User taps a session button. Adapter marks it selected.
-6. User sends normal text. Daemon routes it to the selected CLI/session.
-7. Adapter sends completion, supported approval, and input-request notifications back through Telegram.
+2. Relay receives the Telegram update, validates the allowed chat, deduplicates it, normalizes it into `/api/messages`, and acknowledges callback queries when needed.
+3. Daemon routes the normalized message and posts status/menu events back to relay.
+4. Relay fans those events out through Telegram, so the bot replies with enabled CLI buttons.
+5. User taps a CLI button. Daemon starts the adapter when needed and replies with project/chat buttons through the same relay fan-out path.
+6. User taps a project/chat button. Adapter replies with session buttons scoped to that project/chat. Archived sessions are excluded. Sessions without project metadata are shown under **Chats**; Claude cwd-only sessions are also available under **Chats**; Codex app-server sessions are shown under **Chats** unless explicit project metadata is present; OpenCode sessions use cwd/project metadata when the server returns it. If more than 10 sessions match, the reply includes **Previous** / **Next** page buttons.
+7. User taps a session button. Adapter marks it selected.
+8. User sends normal text. Daemon routes it to the selected CLI/session.
+9. Adapter sends completion, supported approval, and input-request notifications back through relay-owned Telegram delivery.
 
 Supported command flow:
 
@@ -249,7 +251,7 @@ Completion: remote target selection and message send both work again.
 - Daemon owns process supervision, remote polling, on-demand launch, and cross-agent routing.
 - Adapters own CLI command lines, structured output parsing, session discovery, session selection, and native approval callbacks when available.
 - Relay owns HTTP auth, event/message queues, browser UI, protocol pairing offers, devices, attention inbox derivation, and audit.
-- Telegram transport owns Telegram API formatting and callback parsing. It does not own adapter lifecycle.
+- Relay-owned Telegram transport owns Telegram API formatting, polling/webhook ingress, callback parsing, callback acknowledgement, and event fan-out. It does not own adapter lifecycle.
 - Feishu/Lark transport owns app-bot formatting and relay event callback parsing. It does not own adapter lifecycle.
 - MCP owns tool capability exposure. It does not own daemon lifecycle or session selection.
 - `legax` CLI owns local bootstrap diagnostics and managed worktree helper commands.
@@ -262,7 +264,7 @@ Completion: remote target selection and message send both work again.
 - Pairing offers carry session/key/nonce metadata while keeping the desktop relay secret out of the browser.
 - The attention inbox can show and acknowledge approval, input, error, and completion items.
 - The relay web page can select CLI/project/session through the three clickable target segments.
-- Telegram can run `/start -> CLI -> project/chat -> session -> text -> response`.
+- Telegram can run `/start -> relay-normalized message -> CLI -> project/chat -> session -> text -> relay-owned response`.
 - Telegram Mini App can open a project picker only after relay HTTPS and daemon project-root preflight pass.
 - Feishu/Lark can send app-bot notifications and route text replies or approval card actions back through relay `/api/messages`.
 - Permission requests always require an explicit remote decision and return through the CLI's native callback when that adapter supports one.

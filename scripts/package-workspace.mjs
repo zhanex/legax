@@ -17,6 +17,7 @@ const LIB_FILES = [
   "project-browser.mjs",
   "relay-server-core.mjs",
   "runtime-state.mjs",
+  "telegram-transport.mjs",
   "version.mjs",
   "worktree-lite.mjs",
   "yaml.mjs"

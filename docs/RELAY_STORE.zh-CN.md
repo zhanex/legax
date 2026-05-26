@@ -45,7 +45,7 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
 | `leases` | 未来用于 workflow 和 host 归属协调的租约。 |
 | `hosts` | 未来的 host 身份与能力记录。 |
 | `devices` | 按 relay device id 索引的已配对浏览器设备，包含 token 哈希和撤销元数据。 |
-| `transports` | 未来 relay 可见的 transport 身份与路由元数据。 |
+| `transports` | relay 可见的 transport 运行时状态，包括 Telegram offset、去重 id 和当前目标选择。 |
 | `inbox` | 未来用于 relay 路由和 workflow 编排的标准化入站项。 |
 | `commands` | 未来由手机、Telegram、飞书/Lark 或 workflow action 创建的命令记录。 |
 | `events` | relay metadata event stream，用于记录 append/update 路径。它和 per-session 的 Agent 可见 event 队列分开。 |

@@ -513,13 +513,16 @@ class RemoteRouter {
       this.polling = true;
       try {
         const messages = [];
-        for (const transport of relayTransports(this.config)) {
+        const relays = relayTransports(this.config);
+        for (const transport of relays) {
           messages.push(...await this.pollRelay(transport));
         }
-        messages.push(...await pollInboundTransports(this.config, DAEMON_AGENT, {
-          forcePoll: true,
-          drain: false
-        }));
+        if (relays.length === 0) {
+          messages.push(...await pollInboundTransports(this.config, DAEMON_AGENT, {
+            forcePoll: true,
+            drain: false
+          }));
+        }
         for (const message of messages) {
           await this.handleMessage(message);
         }

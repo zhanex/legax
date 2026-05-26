@@ -686,6 +686,79 @@ opencode:
   }, { timeoutMs: 9000 });
 });
 
+test("daemon relay mode consumes relay messages without polling Telegram directly", async (t) => {
+  const relay = await startRelay(t, { sessionId: "daemon-relay-telegram-owner-e2e" });
+  const telegram = await startFakeTelegram(t);
+  const fakeGemini = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-gemini-cli.mjs").replaceAll("\\", "/");
+  const nodePath = process.execPath.replaceAll("\\", "/");
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+  - name: telegram
+    type: telegram
+    enabled: true
+    botToken: test-token
+    chatId: 42
+    apiBaseUrl: ${telegram.apiBaseUrl}
+    timeoutMs: 1000
+daemon:
+  restart: false
+  remotePollIntervalMs: 100
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  autoStart: false
+  command: ${nodePath}
+  args:
+    - ${fakeGemini}
+    - --output-format
+    - stream-json
+  cwd: .
+  promptFlag: --prompt
+  pollIntervalMs: 100
+opencode:
+  enabled: false
+`);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
+    cwd: pluginRoot,
+    env: {
+      ...process.env,
+      LEGAX_CONFIG: configPath,
+      LEGAX_SECRET: relay.desktopSecret
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  daemon.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  await fetchJson(`${relay.baseUrl}/api/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: relay.phoneCookie
+    },
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      targetAgentId: "legax-daemon",
+      type: "control",
+      action: "list_agents",
+      text: "/start"
+    })
+  });
+
+  await waitFor(async () => {
+    const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+    assert.ok(events.events.some((event) => /Choose a CLI adapter/.test(event.text ?? "")), stderr);
+  }, { timeoutMs: 7000 });
+  await sleep(400);
+  assert.equal(telegram.getUpdatesCalls(), 0, "daemon should not call Telegram getUpdates while relay transports are enabled");
+  assert.equal(telegram.sendMessages.length, 0, "daemon should let relay own Telegram sendMessage while relay transports are enabled");
+});
+
 test("daemon routes the full Telegram CLI/project/session/text flow", async (t) => {
   const telegram = await startFakeTelegram(t);
   const fakeGemini = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-gemini-cli.mjs").replaceAll("\\", "/");
@@ -819,6 +892,7 @@ async function startFakeTelegram(t) {
   const sendMessages = [];
   const waiters = [];
   let nextUpdateId = 1000;
+  let getUpdatesCalls = 0;
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -826,6 +900,7 @@ async function startFakeTelegram(t) {
     const body = raw ? JSON.parse(raw) : {};
     const method = String(req.url || "").split("/").pop();
     if (method === "getUpdates") {
+      getUpdatesCalls += 1;
       const result = pendingUpdates.splice(0, pendingUpdates.length);
       sendJsonResponse(res, { ok: true, result });
       return;
@@ -881,7 +956,8 @@ async function startFakeTelegram(t) {
     pushMessage,
     pushCallback,
     waitForSend,
-    sendMessages
+    sendMessages,
+    getUpdatesCalls: () => getUpdatesCalls
   };
 }
 

@@ -67,6 +67,9 @@ sudo ./install.sh --no-node-install
 
 - `/opt/legax-relay/server.mjs`
 - `/opt/legax-relay/lib/relay-server-core.mjs`
+- `/opt/legax-relay/lib/telegram-transport.mjs`
+- `/opt/legax-relay/lib/outbound-transports.mjs`
+- `/opt/legax-relay/lib/menu-groups.mjs`
 - `/opt/legax-relay/lib/yaml.mjs`
 - `/opt/legax-relay/lib/paths.mjs`
 - `/etc/legax-relay/config.yaml` (host / port / secret / store path / audit settings — all inline)
