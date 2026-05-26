@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { closeHttpServer, fetchJson, getFreePort, pairRelayDevice, pluginRoot, startRelay, waitFor } from "./helpers.mjs";
+import { closeHttpServer, fetchJson, getFreePort, pairRelayDevice, pluginRoot, sleep, startRelay, waitFor } from "./helpers.mjs";
 
 async function pairBrowser(relay, { code = "482913", sessionId = relay.sessionId, label = "test phone" } = {}) {
   return pairRelayDevice(relay, { code, sessionId, label });
@@ -61,6 +61,235 @@ test("self-hosted relay initializes the formal relay store schema", async (t) =>
   assert.ok(Array.isArray(store.sessions[relay.sessionId].events));
   assert.ok(Array.isArray(store.sessions[relay.sessionId].messages));
   assert.ok(Array.isArray(store.events));
+});
+
+test("self-hosted relay persists host heartbeats and computes liveness", async (t) => {
+  const relay = await startRelay(t, { sessionId: "host-registry-e2e" });
+
+  const registered = await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      version: "0.0.3-test",
+      capabilities: { platform: "test" },
+      adapters: [{ agentId: "codex-cli", agentLabel: "Codex CLI" }],
+      commandRefs: ["legax.ping", "agent.list"],
+      groups: ["default", "windows"],
+      publicKey: { kid: "test-key" },
+      ttlMs: 200
+    })
+  });
+  assert.equal(registered.host.id, "host-a");
+  assert.equal(registered.host.status, "online");
+
+  const online = await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(online.hosts[0].id, "host-a");
+  assert.equal(online.hosts[0].status, "online");
+  assert.deepEqual(online.hosts[0].commandRefs, ["legax.ping", "agent.list"]);
+
+  await sleep(260);
+  const offline = await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(offline.hosts[0].status, "offline");
+});
+
+test("self-hosted relay command queue claims, completes, expires, and rejects stale results", async (t) => {
+  const relay = await startRelay(t, { sessionId: "command-queue-e2e" });
+  await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      commandRefs: ["legax.ping"],
+      groups: ["blue"],
+      ttlMs: 5000
+    })
+  });
+
+  const created = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      idempotencyKey: "idem-command-1",
+      commandRef: "legax.ping",
+      targetHostId: "host-a",
+      payload: { text: "hello" },
+      maxAttempts: 2
+    })
+  });
+  assert.equal(created.command.state, "pending");
+
+  const duplicate = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      idempotencyKey: "idem-command-1",
+      commandRef: "legax.ping",
+      targetHostId: "host-a",
+      payload: { text: "duplicate" }
+    })
+  });
+  assert.equal(duplicate.command.id, created.command.id);
+  assert.equal(duplicate.idempotent, true);
+
+  const eligible = await fetchJson(`${relay.baseUrl}/api/commands?hostId=host-a&commandRefs=legax.ping`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.deepEqual(eligible.commands.map((command) => command.id), [created.command.id]);
+
+  const unauthorized = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandRef: "agent.list",
+      targetHostId: "host-a",
+      payload: {}
+    })
+  });
+  const unauthorizedPoll = await fetchJson(`${relay.baseUrl}/api/commands?hostId=host-a&commandRefs=agent.list`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.deepEqual(unauthorizedPoll.commands.map((command) => command.id), []);
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/commands/${unauthorized.command.id}/claim`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      skipRelayCookie: true,
+      body: JSON.stringify({ hostId: "host-a", commandRefs: ["agent.list"] })
+    }),
+    { status: 403 }
+  );
+
+  const claimed = await fetchJson(`${relay.baseUrl}/api/commands/${created.command.id}/claim`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({ hostId: "host-a", claimTtlMs: 5000 })
+  });
+  assert.equal(claimed.command.state, "running");
+  assert.equal(claimed.command.claimedBy, "host-a");
+  assert.ok(claimed.command.claimToken);
+
+  const completed = await fetchJson(`${relay.baseUrl}/api/commands/${created.command.id}/result`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      claimToken: claimed.command.claimToken,
+      state: "succeeded",
+      result: { pong: true }
+    })
+  });
+  assert.equal(completed.command.state, "succeeded");
+  assert.deepEqual(completed.command.result, { pong: true });
+
+  const duplicateResult = await fetchJson(`${relay.baseUrl}/api/commands/${created.command.id}/result`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      claimToken: claimed.command.claimToken,
+      state: "succeeded",
+      result: { pong: true }
+    })
+  });
+  assert.equal(duplicateResult.idempotent, true);
+
+  const stale = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandRef: "legax.ping",
+      targetGroup: "blue",
+      payload: {},
+      maxAttempts: 1
+    })
+  });
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/commands/${stale.command.id}/result`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        hostId: "host-a",
+        claimToken: "stale-token",
+        state: "succeeded",
+        result: {}
+      })
+    }),
+    { status: 409 }
+  );
+
+  const expiring = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandRef: "legax.ping",
+      targetHostId: "host-a",
+      ttlMs: 1
+    })
+  });
+  await sleep(20);
+  const expired = await fetchJson(`${relay.baseUrl}/api/commands/${expiring.command.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(expired.command.state, "expired");
 });
 
 test("self-hosted relay migrates legacy relay store version 1 files", async (t) => {

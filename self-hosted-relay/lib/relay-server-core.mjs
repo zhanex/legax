@@ -48,10 +48,16 @@ const TELEGRAM_ACTIVE_POLLS = new Set();
 const BROADCAST_TARGETS = new Set(["*", "all", "broadcast"]);
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const PAIRING_CODE_PATTERN = /^\d{6,8}$/;
+const RELAY_ID_PATTERN = /^[A-Za-z0-9._:/-]{1,160}$/;
 const DEVICE_COOKIE = "legax_device";
 const DEVICE_TOKEN_BYTES = 32;
 const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
+const HOST_HEARTBEAT_TTL_MS = 30_000;
+const COMMAND_TTL_MS = 5 * 60 * 1000;
+const COMMAND_CLAIM_TTL_MS = 30_000;
+const COMMAND_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired"]);
+const COMMAND_RESULT_STATES = new Set(["succeeded", "failed", "cancelled"]);
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
   "generations",
@@ -746,6 +752,314 @@ function normalizeMessage(body, sessionId, seq) {
     seq,
     createdAt: body.createdAt ?? new Date().toISOString()
   };
+}
+
+function relayHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function relayId(value, label, { required = true } = {}) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    if (!required) return "";
+    throw relayHttpError(400, `${label} is required`);
+  }
+  if (!RELAY_ID_PATTERN.test(text)) {
+    throw relayHttpError(400, `${label} contains unsupported characters`);
+  }
+  return text;
+}
+
+function relayString(value, fallback = "", max = 500) {
+  const text = String(value ?? fallback ?? "").trim();
+  return text.slice(0, max);
+}
+
+function relayStringList(value, max = 100) {
+  const items = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(",") : []);
+  const seen = new Set();
+  const normalized = [];
+  for (const item of items) {
+    const text = String(item ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    normalized.push(text.slice(0, 160));
+    if (normalized.length >= max) break;
+  }
+  return normalized;
+}
+
+function positiveInteger(value, fallback, { min = 1, max = 24 * 60 * 60 * 1000 } = {}) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function isoFromMs(ms) {
+  return new Date(ms).toISOString();
+}
+
+function parseTimestampMs(value) {
+  const parsed = Date.parse(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeHostAdapter(adapter) {
+  if (!isRecord(adapter)) return null;
+  const agentId = relayString(adapter.agentId ?? adapter.id ?? adapter.name, "", 160);
+  if (!agentId) return null;
+  return {
+    ...adapter,
+    agentId,
+    agentLabel: relayString(adapter.agentLabel ?? adapter.label ?? agentId, agentId, 160)
+  };
+}
+
+function relayHostStatus(host, nowMs = Date.now()) {
+  return parseTimestampMs(host?.expiresAt) > nowMs ? "online" : "offline";
+}
+
+function publicRelayHost(host, nowMs = Date.now()) {
+  return {
+    ...host,
+    status: relayHostStatus(host, nowMs)
+  };
+}
+
+function registerRelayHost(store, body) {
+  const hostId = relayId(body.hostId ?? body.id, "hostId");
+  const existing = store.hosts[hostId] ?? {};
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const ttlMs = positiveInteger(body.ttlMs ?? body.heartbeatTtlMs ?? existing.ttlMs, HOST_HEARTBEAT_TTL_MS);
+  const adapters = Object.prototype.hasOwnProperty.call(body, "adapters")
+    ? (Array.isArray(body.adapters) ? body.adapters.map(normalizeHostAdapter).filter(Boolean) : [])
+    : (Array.isArray(existing.adapters) ? existing.adapters : []);
+  const commandRefs = Object.prototype.hasOwnProperty.call(body, "commandRefs")
+    ? relayStringList(body.commandRefs)
+    : (Array.isArray(existing.commandRefs) ? existing.commandRefs : []);
+  const groups = Object.prototype.hasOwnProperty.call(body, "groups")
+    ? relayStringList(body.groups)
+    : (Array.isArray(existing.groups) ? existing.groups : []);
+  const host = {
+    ...existing,
+    id: hostId,
+    displayName: relayString(body.displayName ?? existing.displayName ?? hostId, hostId, 160),
+    version: relayString(body.version ?? existing.version ?? "", "", 80),
+    capabilities: isRecord(body.capabilities) ? body.capabilities : (isRecord(existing.capabilities) ? existing.capabilities : {}),
+    adapters,
+    commandRefs,
+    groups,
+    publicKey: body.publicKey === undefined
+      ? (existing.publicKey ?? null)
+      : (isRecord(body.publicKey) ? body.publicKey : null),
+    createdAt: existing.createdAt ?? now,
+    updatedAt: now,
+    lastSeenAt: now,
+    ttlMs,
+    expiresAt: isoFromMs(nowMs + ttlMs)
+  };
+  store.hosts[hostId] = host;
+  appendRelayStoreEvent(store, "host.heartbeat", {
+    hostId,
+    expiresAt: host.expiresAt
+  });
+  return host;
+}
+
+function commandIdFromBody(body) {
+  if (body.id !== undefined && body.id !== null && body.id !== "") {
+    return relayId(body.id, "command id");
+  }
+  return `cmd_${crypto.randomBytes(12).toString("base64url")}`;
+}
+
+function commandPayload(value) {
+  return value === undefined ? {} : value;
+}
+
+function findIdempotentCommand(store, idempotencyKey) {
+  if (!idempotencyKey) return null;
+  return Object.values(store.commands).find((command) => command?.idempotencyKey === idempotencyKey) ?? null;
+}
+
+function createRelayCommand(store, body) {
+  const idempotencyKey = relayString(body.idempotencyKey, "", 240);
+  const existing = findIdempotentCommand(store, idempotencyKey);
+  if (existing) {
+    refreshRelayCommand(existing);
+    return { command: existing, idempotent: true };
+  }
+
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const command = {
+    id: commandIdFromBody(body),
+    sessionId: safeSessionKey(body.sessionId),
+    commandRef: relayId(body.commandRef, "commandRef"),
+    state: "pending",
+    targetHostId: relayId(body.targetHostId, "targetHostId", { required: false }),
+    targetGroup: relayId(body.targetGroup, "targetGroup", { required: false }),
+    target: isRecord(body.target) ? body.target : {},
+    generationId: relayString(body.generationId, "", 160),
+    leaseToken: relayString(body.leaseToken, "", 240),
+    payload: commandPayload(body.payload),
+    idempotencyKey,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: body.expiresAt ? isoFromMs(parseTimestampMs(body.expiresAt)) : isoFromMs(nowMs + positiveInteger(body.ttlMs ?? body.expiresInMs, COMMAND_TTL_MS)),
+    maxAttempts: positiveInteger(body.maxAttempts, 1, { min: 1, max: 100 }),
+    attempts: 0,
+    claimedBy: "",
+    claimToken: "",
+    claimExpiresAt: "",
+    startedAt: "",
+    completedAt: "",
+    result: null,
+    error: null
+  };
+  store.commands[command.id] = command;
+  appendRelayStoreEvent(store, "command.created", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    targetHostId: command.targetHostId,
+    targetGroup: command.targetGroup
+  });
+  return { command, idempotent: false };
+}
+
+function refreshRelayCommand(command, nowMs = Date.now()) {
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return false;
+  const now = isoFromMs(nowMs);
+  if (parseTimestampMs(command.expiresAt) <= nowMs) {
+    command.state = "expired";
+    command.updatedAt = now;
+    command.completedAt = command.completedAt || now;
+    command.error ??= { code: "expired", message: "command expired before completion" };
+    return true;
+  }
+  if (command.state === "running" && command.claimExpiresAt && parseTimestampMs(command.claimExpiresAt) <= nowMs) {
+    const attempts = Number(command.attempts ?? 0);
+    const maxAttempts = Number(command.maxAttempts ?? 1);
+    command.updatedAt = now;
+    if (attempts >= maxAttempts) {
+      command.state = "failed";
+      command.completedAt = now;
+      command.error = { code: "claim_timeout", message: "command claim expired" };
+    } else {
+      command.state = "pending";
+      command.claimedBy = "";
+      command.claimToken = "";
+      command.claimExpiresAt = "";
+    }
+    return true;
+  }
+  return false;
+}
+
+function refreshRelayCommands(store) {
+  let changed = false;
+  for (const command of Object.values(store.commands)) {
+    changed = refreshRelayCommand(command) || changed;
+  }
+  return changed;
+}
+
+function relayHostCanRunCommand(store, command, hostId, commandRefs = []) {
+  const host = store.hosts[hostId];
+  if (!host || relayHostStatus(host) !== "online") return false;
+  const allowedRefs = new Set(Array.isArray(host.commandRefs) ? host.commandRefs : []);
+  if (!allowedRefs.has(command.commandRef)) return false;
+  if (commandRefs.length > 0 && !commandRefs.includes(command.commandRef)) return false;
+  if (command.targetHostId && command.targetHostId !== hostId) return false;
+  if (command.targetGroup) {
+    const groups = Array.isArray(host.groups) ? host.groups : [];
+    if (!groups.includes(command.targetGroup)) return false;
+  }
+  return true;
+}
+
+function eligibleRelayCommands(store, url) {
+  refreshRelayCommands(store);
+  const hostId = relayId(url.searchParams.get("hostId"), "hostId");
+  const commandRefs = relayStringList(url.searchParams.get("commandRefs"));
+  const limit = positiveInteger(url.searchParams.get("limit"), 20, { min: 1, max: 100 });
+  return Object.values(store.commands)
+    .filter((command) => command.state === "pending")
+    .filter((command) => relayHostCanRunCommand(store, command, hostId, commandRefs))
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
+    .slice(0, limit);
+}
+
+function claimRelayCommand(store, commandId, body) {
+  const command = store.commands[commandId];
+  if (!command) throw relayHttpError(404, "command not found");
+  refreshRelayCommand(command);
+  const hostId = relayId(body.hostId, "hostId");
+  const commandRefs = relayStringList(body.commandRefs);
+  if (command.state !== "pending") throw relayHttpError(409, `command is ${command.state}`);
+  if (!relayHostCanRunCommand(store, command, hostId, commandRefs)) {
+    throw relayHttpError(403, "host is not eligible for command");
+  }
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  command.state = "running";
+  command.claimedBy = hostId;
+  command.claimToken = `claim_${crypto.randomBytes(16).toString("base64url")}`;
+  command.claimExpiresAt = isoFromMs(nowMs + positiveInteger(body.claimTtlMs, COMMAND_CLAIM_TTL_MS));
+  command.startedAt = command.startedAt || now;
+  command.updatedAt = now;
+  command.attempts = Number(command.attempts ?? 0) + 1;
+  appendRelayStoreEvent(store, "command.claimed", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    hostId
+  });
+  return command;
+}
+
+function completeRelayCommand(store, commandId, body) {
+  const command = store.commands[commandId];
+  if (!command) throw relayHttpError(404, "command not found");
+  refreshRelayCommand(command);
+  const hostId = relayId(body.hostId, "hostId");
+  const claimToken = relayString(body.claimToken, "", 240);
+  if (COMMAND_TERMINAL_STATES.has(command.state)) {
+    if (command.claimedBy === hostId && command.claimToken === claimToken) {
+      return { command, idempotent: true };
+    }
+    throw relayHttpError(409, `command is ${command.state}`);
+  }
+  if (command.state !== "running") throw relayHttpError(409, `command is ${command.state}`);
+  if (command.claimedBy !== hostId || command.claimToken !== claimToken) {
+    throw relayHttpError(409, "stale command result");
+  }
+  if (command.leaseToken && relayString(body.leaseToken, "", 240) !== command.leaseToken) {
+    throw relayHttpError(409, "stale command lease token");
+  }
+  const state = relayString(body.state ?? body.status, "", 40);
+  if (!COMMAND_RESULT_STATES.has(state)) {
+    throw relayHttpError(400, "result state must be succeeded, failed, or cancelled");
+  }
+  const now = new Date().toISOString();
+  command.state = state;
+  command.updatedAt = now;
+  command.completedAt = now;
+  command.result = body.result === undefined ? null : body.result;
+  command.error = body.error === undefined
+    ? null
+    : (isRecord(body.error) ? body.error : { message: String(body.error) });
+  appendRelayStoreEvent(store, "command.completed", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    hostId,
+    state
+  });
+  return { command, idempotent: false };
 }
 
 function appendSessionMessage(store, requestedSessionId, body) {
@@ -4131,6 +4445,103 @@ async function route(req, res) {
     device.revokedAt = new Date().toISOString();
     saveStore(store);
     sendJson(res, 200, { ok: true, device: publicDevice(device) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hosts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const host = registerRelayHost(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, host: publicRelayHost(host) });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hosts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const nowMs = Date.now();
+    const hosts = Object.values(store.hosts)
+      .map((host) => publicRelayHost(host, nowMs))
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    sendJson(res, 200, { ok: true, hosts });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/commands") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { command, idempotent } = createRelayCommand(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command, idempotent });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/commands") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const commands = eligibleRelayCommands(store, url);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, commands });
+    return;
+  }
+
+  const commandRoute = url.pathname.match(/^\/api\/commands\/([^/]+)(?:\/([^/]+))?$/);
+  if (commandRoute && req.method === "GET" && !commandRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const commandId = decodeURIComponent(commandRoute[1]);
+    const store = loadStore();
+    const command = store.commands[commandId];
+    if (!command) {
+      sendJson(res, 404, { ok: false, error: "command not found" });
+      return;
+    }
+    refreshRelayCommand(command);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command });
+    return;
+  }
+
+  if (commandRoute && req.method === "POST" && commandRoute[2] === "claim") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const command = claimRelayCommand(store, decodeURIComponent(commandRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command });
+    return;
+  }
+
+  if (commandRoute && req.method === "POST" && commandRoute[2] === "result") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { command, idempotent } = completeRelayCommand(store, decodeURIComponent(commandRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command, idempotent });
     return;
   }
 

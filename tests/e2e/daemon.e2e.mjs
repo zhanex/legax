@@ -110,6 +110,93 @@ test("daemon dry-run reports enabled adapters without starting clients", async (
   assert.equal(body.adapters.find((adapter) => adapter.name === "opencode").autoStart, false);
 });
 
+test("daemon registers a relay host and drains queued relay commands", async (t) => {
+  const relay = await startRelay(t, { sessionId: "daemon-command-queue-e2e" });
+  const fakeGemini = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-gemini-cli.mjs").replaceAll("\\", "/");
+  const nodePath = process.execPath.replaceAll("\\", "/");
+  const hostId = `daemon-command-host-${process.pid}`;
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+daemon:
+  restart: false
+  launchOnDemand: false
+  remotePollIntervalMs: 100
+  hostId: ${hostId}
+  hostGroups:
+    - command-e2e
+  hostHeartbeatIntervalMs: 100
+  commandPollIntervalMs: 100
+  commandClaimTtlMs: 5000
+codex:
+  enabled: false
+claude:
+  enabled: false
+gemini:
+  enabled: true
+  autoStart: false
+  command: ${nodePath}
+  args:
+    - ${fakeGemini}
+    - --output-format
+    - stream-json
+  cwd: .
+  promptFlag: --prompt
+  approvalMode: default
+opencode:
+  enabled: false
+`);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const created = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      commandRef: "legax.ping",
+      targetGroup: "command-e2e",
+      payload: { text: "queued-before-daemon" },
+      maxAttempts: 2
+    })
+  });
+
+  const daemon = spawnNodeForTest(t, ["scripts/legax-daemon.mjs"], {
+    cwd: pluginRoot,
+    env: {
+      ...process.env,
+      LEGAX_CONFIG: configPath
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  daemon.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  await waitFor(async () => {
+    const response = await fetchJson(`${relay.baseUrl}/api/hosts`, {
+      headers: { "x-legax-secret": relay.desktopSecret },
+      skipRelayCookie: true
+    });
+    const host = response.hosts.find((candidate) => candidate.id === hostId);
+    assert.ok(host, stderr);
+    assert.equal(host.status, "online");
+    assert.ok(host.commandRefs.includes("legax.ping"));
+    assert.deepEqual(host.adapters.map((adapter) => adapter.agentId), ["gemini-cli"]);
+  }, { timeoutMs: 5000, intervalMs: 50 });
+
+  await waitFor(async () => {
+    const response = await fetchJson(`${relay.baseUrl}/api/commands/${created.command.id}`, {
+      headers: { "x-legax-secret": relay.desktopSecret },
+      skipRelayCookie: true
+    });
+    assert.equal(response.command.state, "succeeded", `${stderr}\n${JSON.stringify(response.command, null, 2)}`);
+    assert.equal(response.command.result.pong, true);
+    assert.equal(response.command.result.payload.text, "queued-before-daemon");
+  }, { timeoutMs: 5000, intervalMs: 50 });
+});
+
 test("daemon stops restarting an adapter after repeated rapid startup failures", async (t) => {
   const relay = await startRelay(t, { sessionId: "daemon-restart-circuit-e2e" });
   const fakeClaude = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-claude-code.mjs").replaceAll("\\", "/");

@@ -56,6 +56,13 @@ daemon:
   restartHealthyAfterMs: 60000 # 运行达到该时长后重置重启熔断
   remoteRouter: true          # daemon 轮询 relay；启用 relay transport 时，Telegram 轮询/webhook 与 Telegram 出站由 relay 负责
   remotePollIntervalMs: 1000
+  hostId: ""                  # 可选的稳定 relay host id；留空时由主机名和配置路径推导
+  hostGroups:
+    - default                 # relay command queue 可以按组目标投递到一类 host
+  hostHeartbeatTtlMs: 30000   # 超过这个 TTL 未收到心跳时，relay 将该 daemon 标为 offline
+  hostHeartbeatIntervalMs: 10000
+  commandPollIntervalMs: 1000
+  commandClaimTtlMs: 30000    # daemon claim 一个 relay command 后的最长执行时间，超时后可 retry/failed
   projectRoots:               # Telegram Mini App 项目选择器可浏览的本机目录
     - F:/workspace
   projectRootHiddenNames:

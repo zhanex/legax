@@ -42,12 +42,12 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
 | --- | --- |
 | `sessions` | 按 relay `sessionId` 索引的稳定 relay sessions。当前记录仍保留 legacy event/message 队列，同时逐步引入可迁移 generation 模型。 |
 | `generations` | relay 拥有的 generation 记录。一个 generation 可以映射到 CLI 原生 session、turn 或 resume 目标，但这些原生 id 不是公开 relay id。 |
-| `leases` | 未来用于 workflow 和 host 归属协调的租约。 |
-| `hosts` | 未来的 host 身份与能力记录。 |
+| `leases` | 用于后续 workflow 和 host 归属扩展的协调租约记录。 |
+| `hosts` | daemon host 身份、能力、adapter、命令 allowlist、分组和心跳记录。 |
 | `devices` | 按 relay device id 索引的已配对浏览器设备，包含 token 哈希和撤销元数据。 |
 | `transports` | relay 可见的 transport 运行时状态，包括 Telegram offset、去重 id 和当前目标选择。 |
 | `inbox` | 未来用于 relay 路由和 workflow 编排的标准化入站项。 |
-| `commands` | 未来由手机、Telegram、飞书/Lark 或 workflow action 创建的命令记录。 |
+| `commands` | relay 拥有的命令记录，可由手机、Telegram、飞书/Lark、workflow action 或桌面工具创建，只能由符合条件的 daemon host 执行。 |
 | `events` | relay metadata event stream，用于记录 append/update 路径。它和 per-session 的 Agent 可见 event 队列分开。 |
 | `artifacts` | 未来由 workflow 生成或引用的 artifact 元数据。 |
 | `workflowDefinitions` | 未来 relay 侧 workflow 定义。 |
@@ -81,6 +81,82 @@ Session 记录按稳定 relay `sessionId` 索引，并规范化为包含：
 ```
 
 `events` 和 `messages` 是 `/api/events` 与 `/api/messages` 当前使用的 legacy 队列。它们会继续保留以维持兼容性。新的 workflow 编排应基于正式 relay 域构建，而不是把这些队列当作唯一 session 事实来源。
+
+## Host 记录
+
+daemon host 通过携带桌面端 relay secret 调用 `POST /api/hosts` 注册或刷新自身。relay 会把最新心跳持久化到 `hosts[hostId]`：
+
+```json
+{
+  "id": "host-desktop-1",
+  "displayName": "Desktop Agent",
+  "version": "PACKAGE_VERSION",
+  "capabilities": {
+    "platform": "win32",
+    "arch": "x64",
+    "commandQueue": true
+  },
+  "adapters": [
+    {
+      "agentId": "gemini-cli",
+      "agentLabel": "Gemini CLI",
+      "key": "gemini",
+      "cliBackend": "stream-json",
+      "autoStart": false
+    }
+  ],
+  "commandRefs": ["legax.ping", "agent.list", "legax.daemon.status"],
+  "groups": ["default"],
+  "publicKey": null,
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z",
+  "lastSeenAt": "2026-05-26T00:00:00.000Z",
+  "ttlMs": 30000,
+  "expiresAt": "2026-05-26T00:00:30.000Z"
+}
+```
+
+`GET /api/hosts` 会返回持久化的 host 字段，并附加计算得出的 `status`：`online` 或 `offline`。存活状态由 `expiresAt` 推导，relay 不需要后台 sweeper 才能把 host 标为离线。`commandRefs` 是 daemon 的命令 allowlist，`groups` 允许命令创建方把命令投递给一类 host，而不是必须指定单个 host id。
+
+## Command 记录
+
+relay command 是协调记录。relay 负责保存、claim、过期和结果上报；它本身永远不执行 shell 命令，也不直接执行 adapter 逻辑。
+
+```json
+{
+  "id": "cmd_abc123",
+  "sessionId": "default",
+  "commandRef": "legax.ping",
+  "state": "pending",
+  "targetHostId": "",
+  "targetGroup": "default",
+  "target": {},
+  "generationId": "",
+  "leaseToken": "",
+  "payload": {},
+  "idempotencyKey": "client-command-1",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z",
+  "expiresAt": "2026-05-26T00:05:00.000Z",
+  "maxAttempts": 1,
+  "attempts": 0,
+  "claimedBy": "",
+  "claimToken": "",
+  "claimExpiresAt": "",
+  "startedAt": "",
+  "completedAt": "",
+  "result": null,
+  "error": null
+}
+```
+
+命令状态只能是 `pending`、`running`、`succeeded`、`failed`、`cancelled` 或 `expired`。
+
+- `POST /api/commands` 创建 pending 命令。重复的 `idempotencyKey` 会返回已有命令，并带上 `idempotent: true`。
+- `GET /api/commands?hostId=...&commandRefs=...` 列出该 host 可执行的 pending 命令。可执行条件包括 host 仍在线、`commandRef` 匹配，并且 `targetHostId` 匹配、`targetGroup` 匹配或命令没有显式目标。
+- `POST /api/commands/:id/claim` 将 `pending -> running`，写入 `claimedBy`，递增 `attempts`，生成 `claimToken`，并设置 `claimExpiresAt`。
+- `POST /api/commands/:id/result` 只接受当前 `claimedBy` 和 `claimToken`。重复上报同一个 terminal result 是幂等的；过期 host、过期 token 或过期 `leaseToken` 会返回 `409`，且不会修改命令。
+- `GET /api/commands/:id` 会刷新过期状态并返回命令。过期的 pending 命令会变成 `expired`；过期的 running claim 会根据 `maxAttempts` 回到 `pending` 等待重试，或变成 `failed`。
 
 ## 兼容与失败策略
 

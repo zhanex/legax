@@ -61,6 +61,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.
    - Uses the first formal relay store schema, `legax.relay/1`. This is not a "V2" format; Legax has not shipped a stable V1 release.
    - Owns portable relay session state, including sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
+   - Exposes a relay-owned host registry and command queue. The relay records host heartbeats, command eligibility, claims, terminal results, and stale-result rejection; local daemons execute the allowlisted commands.
 
 4. Third-party transports
    - Telegram supports relay-owned outbound messages, relay-owned `getUpdates` polling or `/api/telegram/events` webhooks, inline CLI/project/session buttons, and approval buttons.
@@ -115,6 +116,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Reads the same YAML config and supervises all enabled CLI adapters.
    - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
    - Polls relay `/api/messages` while running; relay-owned Telegram and Feishu/Lark inbound actions enter through the same message queue, so remote menus and on-demand launches do not depend on any specific adapter being alive.
+   - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and currently executes only non-shell built-ins such as `legax.ping`, `agent.list`, and `legax.daemon.status`.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
    - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
    - Writes adapter-specific MCP config before launching Claude Code or Gemini CLI when `mcpAutoConfigure` is enabled.
@@ -243,7 +245,7 @@ The literal target `*`, `all`, or `broadcast` skips routing and delivers to ever
 
 **2. Who polls remote inbound channels?**
 
-With the unified daemon, `daemon.remoteRouter: true` is the default. When an enabled relay transport exists, Telegram is relay-owned: the relay reads Telegram `getUpdates` or accepts `/api/telegram/events` webhooks, normalizes text and callbacks into `/api/messages`, acknowledges callback queries, and fans `/api/events` back out through Telegram. The daemon polls relay `/api/messages`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. Feishu/Lark callbacks also enter through the relay and then follow the same `/api/messages` path. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
+With the unified daemon, `daemon.remoteRouter: true` is the default. When an enabled relay transport exists, Telegram is relay-owned: the relay reads Telegram `getUpdates` or accepts `/api/telegram/events` webhooks, normalizes text and callbacks into `/api/messages`, acknowledges callback queries, and fans `/api/events` back out through Telegram. The daemon polls relay `/api/messages`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. It also posts `/api/hosts` heartbeats and drains `/api/commands` for safe daemon-level actions. Feishu/Lark callbacks also enter through the relay and then follow the same `/api/messages` path. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
 
 If you run without a relay transport, direct Telegram polling remains a standalone fallback. Only one process can hold the Telegram long-poll cursor; the others must yield. The fallback resolution order is:
 
