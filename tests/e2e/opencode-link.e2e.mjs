@@ -286,7 +286,7 @@ async function startFakeOpenCodeServer(t, { sessions, messages, replyText }) {
       response.end("not found");
     } catch (error) {
       response.statusCode = 500;
-      response.end(error.stack);
+      response.end("internal server error");
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));

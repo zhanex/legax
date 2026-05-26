@@ -998,8 +998,11 @@ function normalizeMode(value) {
 
 function quoteWindowsShellArg(arg) {
   const value = String(arg);
-  if (!/[ \t"&|<>^]/.test(value)) return value;
-  return `"${value.replace(/"/g, '\\"')}"`;
+  if (/["&|<>^%!\r\n]/.test(value)) {
+    throw new Error("Unsafe Windows shell argument. Configure an absolute executable path or executable shim before passing shell metacharacters.");
+  }
+  if (value === "" || /[ \t()]/.test(value)) return `"${value}"`;
+  return value;
 }
 
 async function main() {
