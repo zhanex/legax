@@ -21,6 +21,7 @@ The relay store is the relay-owned persistence file behind `relay.storePath`. De
   "sessions": {},
   "generations": {},
   "leases": {},
+  "handoffs": {},
   "hosts": {},
   "devices": {},
   "transports": {},
@@ -42,7 +43,8 @@ Required formal domains:
 | --- | --- |
 | `sessions` | Stable relay sessions keyed by relay `sessionId`. Current records keep legacy event/message queues while the portable generation model is introduced. |
 | `generations` | Relay-owned generation records. A generation may map to CLI-native sessions, turns, or resumes, but those native ids are not the public relay id. |
-| `leases` | Coordination lease records for future workflow and host ownership expansion. |
+| `leases` | Active execution ownership records with host id, generation id, fencing token, lease token, expiry, renewal, release, and reclaim state. |
+| `handoffs` | Auditable handoff records for moving execution from one host to another through checkpoint, upload, release, claim, restore, and resume transitions. |
 | `hosts` | Daemon host identity, capability, adapter, command allowlist, group, and heartbeat records. |
 | `devices` | Paired browser devices keyed by relay device id, with token hashes and revocation metadata. |
 | `transports` | Relay-visible transport runtime state, including Telegram offset, dedupe ids, and current target selection. |
@@ -69,9 +71,16 @@ A session record is keyed by a stable relay `sessionId` and normalized to includ
 {
   "id": "default",
   "status": "active",
+  "title": "",
+  "selectedAgentId": "",
   "createdAt": "2026-05-26T00:00:00.000Z",
   "updatedAt": "2026-05-26T00:00:00.000Z",
   "currentGenerationId": "",
+  "generationIds": [],
+  "handoffFromGenerationId": "",
+  "forkedFromGenerationId": "",
+  "transportBindings": {},
+  "metadata": {},
   "nativeSessions": {},
   "events": [],
   "messages": [],
@@ -81,6 +90,99 @@ A session record is keyed by a stable relay `sessionId` and normalized to includ
 ```
 
 `events` and `messages` are the legacy queues used by `/api/events` and `/api/messages`. They remain in place for compatibility. New workflow orchestration should build on formal relay domains instead of treating those queues as the only source of session truth.
+
+## Generation Records
+
+A generation is one execution attempt or branch under a portable relay session:
+
+```json
+{
+  "id": "gen_abc123",
+  "sessionId": "default",
+  "baseGenerationId": "",
+  "hostId": "host-desktop-1",
+  "adapterId": "gemini-cli",
+  "agentId": "gemini-cli",
+  "nativeSession": {
+    "provider": "gemini",
+    "id": "native-cli-session"
+  },
+  "worktree": {
+    "path": "F:/workspace/project"
+  },
+  "checkpoint": {
+    "artifactId": "checkpoint-1"
+  },
+  "state": "created",
+  "result": null,
+  "error": null,
+  "leaseId": "",
+  "leaseIds": [],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+Native CLI ids belong in `nativeSession` only. They are not stable relay `sessionId` values and should not be exposed as the primary user-facing identity.
+
+`POST /api/generations` creates a generation and makes it the session's `currentGenerationId`. `POST /api/generations/:id/update` mutates lease-protected fields such as `state`, `checkpoint`, `worktree`, `nativeSession`, `result`, and `error`; it requires the active lease holder's `hostId`, `fencingToken`, and `leaseToken`.
+
+## Lease Records
+
+A lease fences active execution ownership for one generation:
+
+```json
+{
+  "id": "lease_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "hostId": "host-desktop-1",
+  "adapterId": "gemini-cli",
+  "state": "active",
+  "fencingToken": 1,
+  "token": "lease_secret_token",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z",
+  "renewedAt": "2026-05-26T00:00:00.000Z",
+  "expiresAt": "2026-05-26T00:00:30.000Z",
+  "releasedAt": "",
+  "expiredAt": "",
+  "reclaimedAt": ""
+}
+```
+
+Lease state is one of `active`, `released`, `expired`, or `reclaimed`.
+
+- `POST /api/leases/claim` creates an active lease when the generation has no active lease.
+- An expired lease can be reclaimed only when the caller passes `reclaimExpired: true`; the new lease gets a higher `fencingToken`.
+- `POST /api/leases/:id/renew` extends expiry and requires the current `hostId`, `fencingToken`, and `leaseToken`.
+- `POST /api/leases/:id/release` moves the active lease to `released` and also requires the current `hostId`, `fencingToken`, and `leaseToken`.
+- Stale host ids, stale fencing tokens, and stale lease tokens fail with `409` and do not mutate the generation.
+
+## Fork And Handoff Records
+
+`POST /api/generations/:id/fork` creates a child generation whose `baseGenerationId` points at the parent. The parent generation is not mutated; audit is appended only to the relay metadata event stream. Fork requires the current lease holder's `leaseHostId`, `fencingToken`, and `leaseToken`.
+
+`POST /api/handoffs` creates a handoff record:
+
+```json
+{
+  "id": "handoff_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "fromHostId": "host-a",
+  "toHostId": "host-b",
+  "state": "requested",
+  "transitions": [
+    { "state": "requested", "at": "2026-05-26T00:00:00.000Z" }
+  ],
+  "error": null,
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+`GET /api/handoffs/:id` reads the current handoff record. `POST /api/handoffs/:id/transition` accepts only the documented sequence: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. Retrying the same transition is idempotent and does not append a duplicate event. Each new transition appends a `handoff.<state>` metadata event so handoff progress remains auditable.
 
 ## Host Records
 

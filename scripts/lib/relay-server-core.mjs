@@ -58,10 +58,15 @@ const COMMAND_TTL_MS = 5 * 60 * 1000;
 const COMMAND_CLAIM_TTL_MS = 30_000;
 const COMMAND_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired"]);
 const COMMAND_RESULT_STATES = new Set(["succeeded", "failed", "cancelled"]);
+const GENERATION_STATES = new Set(["created", "active", "running", "checkpointed", "succeeded", "failed", "cancelled", "handed_off", "forked", "closed"]);
+const LEASE_ACTIVE_STATES = new Set(["active"]);
+const HANDOFF_TRANSITIONS = ["requested", "checkpointed", "uploaded", "released", "claimed", "restored", "resumed"];
+const HANDOFF_TERMINAL_STATES = new Set(["resumed", "failed"]);
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
   "generations",
   "leases",
+  "handoffs",
   "hosts",
   "devices",
   "transports",
@@ -232,6 +237,7 @@ function emptyRelayStore() {
     sessions: {},
     generations: {},
     leases: {},
+    handoffs: {},
     hosts: {},
     devices: {},
     transports: {},
@@ -258,9 +264,37 @@ function ensureSessionShape(session, sessionId) {
   if (!record.status || typeof record.status !== "string") record.status = "active";
   if (!record.createdAt || typeof record.createdAt !== "string") record.createdAt = now;
   if (!record.updatedAt || typeof record.updatedAt !== "string") record.updatedAt = record.createdAt;
+  if (record.title == null) record.title = "";
+  if (typeof record.title !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: title must be a string`);
+  }
+  if (record.selectedAgentId == null) record.selectedAgentId = "";
+  if (typeof record.selectedAgentId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: selectedAgentId must be a string`);
+  }
   if (record.currentGenerationId == null) record.currentGenerationId = "";
   if (typeof record.currentGenerationId !== "string") {
     throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: currentGenerationId must be a string`);
+  }
+  if (record.generationIds == null) record.generationIds = [];
+  if (!Array.isArray(record.generationIds)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: generationIds must be an array`);
+  }
+  if (record.handoffFromGenerationId == null) record.handoffFromGenerationId = "";
+  if (typeof record.handoffFromGenerationId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: handoffFromGenerationId must be a string`);
+  }
+  if (record.forkedFromGenerationId == null) record.forkedFromGenerationId = "";
+  if (typeof record.forkedFromGenerationId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: forkedFromGenerationId must be a string`);
+  }
+  if (record.transportBindings == null) record.transportBindings = {};
+  if (!isRecord(record.transportBindings)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: transportBindings must be an object`);
+  }
+  if (record.metadata == null) record.metadata = {};
+  if (!isRecord(record.metadata)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: metadata must be an object`);
   }
   if (record.nativeSessions == null) record.nativeSessions = {};
   if (!isRecord(record.nativeSessions)) {
@@ -1060,6 +1094,392 @@ function completeRelayCommand(store, commandId, body) {
     state
   });
   return { command, idempotent: false };
+}
+
+function generatedRelayId(prefix) {
+  return `${prefix}_${crypto.randomBytes(12).toString("base64url")}`;
+}
+
+function portableSessionId(value, { required = true, generate = false } = {}) {
+  const text = String(value ?? "").trim();
+  if (!text && generate) return generatedRelayId("sess").slice(0, 64);
+  if (!text) {
+    if (!required) return "";
+    throw relayHttpError(400, "sessionId is required");
+  }
+  if (!isValidSessionId(text)) throw relayHttpError(400, "sessionId contains unsupported characters");
+  return text;
+}
+
+function portableRecord(value) {
+  return isRecord(value) ? value : {};
+}
+
+function appendUnique(list, value) {
+  if (!list.includes(value)) list.push(value);
+}
+
+function createPortableSession(store, body) {
+  const sessionId = portableSessionId(body.sessionId ?? body.id, { generate: true });
+  const [, session] = getSession(store, sessionId);
+  const now = new Date().toISOString();
+  session.status = relayString(body.status ?? session.status ?? "active", "active", 80);
+  session.title = relayString(body.title ?? session.title ?? "", "", 200);
+  session.selectedAgentId = relayString(body.selectedAgentId ?? body.agentId ?? session.selectedAgentId ?? "", "", 160);
+  session.transportBindings = Object.prototype.hasOwnProperty.call(body, "transportBindings")
+    ? portableRecord(body.transportBindings)
+    : portableRecord(session.transportBindings);
+  session.metadata = {
+    ...portableRecord(session.metadata),
+    ...portableRecord(body.metadata)
+  };
+  session.updatedAt = now;
+  appendRelayStoreEvent(store, "session.upserted", { sessionId });
+  return session;
+}
+
+function publicPortableSession(store, session) {
+  const currentGeneration = session.currentGenerationId ? store.generations[session.currentGenerationId] ?? null : null;
+  const activeLease = currentGeneration ? activeLeaseForGeneration(store, currentGeneration.id) : null;
+  return { session, currentGeneration, activeLease };
+}
+
+function createPortableGeneration(store, body, { baseGenerationId = "" } = {}) {
+  const sessionId = portableSessionId(body.sessionId);
+  const [, session] = getSession(store, sessionId);
+  const generationId = body.generationId || body.id
+    ? relayId(body.generationId ?? body.id, "generationId")
+    : generatedRelayId("gen");
+  if (store.generations[generationId]) throw relayHttpError(409, "generation already exists");
+  if (baseGenerationId && !store.generations[baseGenerationId]) {
+    throw relayHttpError(404, "base generation not found");
+  }
+  const now = new Date().toISOString();
+  const adapterId = relayString(body.adapterId ?? body.agentId ?? "", "", 160);
+  const generation = {
+    id: generationId,
+    sessionId,
+    baseGenerationId: relayString(baseGenerationId || body.baseGenerationId || body.parentGenerationId || "", "", 160),
+    hostId: relayId(body.hostId, "hostId", { required: false }),
+    adapterId,
+    agentId: adapterId,
+    nativeSession: portableRecord(body.nativeSession ?? body.native),
+    worktree: portableRecord(body.worktree),
+    checkpoint: portableRecord(body.checkpoint),
+    state: GENERATION_STATES.has(body.state) ? body.state : "created",
+    result: body.result ?? null,
+    error: body.error ?? null,
+    leaseId: "",
+    leaseIds: [],
+    createdAt: now,
+    updatedAt: now
+  };
+  store.generations[generationId] = generation;
+  appendUnique(session.generationIds, generationId);
+  session.currentGenerationId = generationId;
+  session.selectedAgentId = session.selectedAgentId || adapterId;
+  if (adapterId && Object.keys(generation.nativeSession).length > 0) {
+    session.nativeSessions[adapterId] = {
+      generationId,
+      nativeSession: generation.nativeSession
+    };
+  }
+  session.updatedAt = now;
+  appendRelayStoreEvent(store, "generation.created", {
+    sessionId,
+    generationId,
+    baseGenerationId: generation.baseGenerationId,
+    hostId: generation.hostId,
+    adapterId
+  });
+  return generation;
+}
+
+function refreshPortableLease(store, lease, nowMs = Date.now()) {
+  if (!lease || !LEASE_ACTIVE_STATES.has(lease.state)) return false;
+  if (parseTimestampMs(lease.expiresAt) > nowMs) return false;
+  const now = isoFromMs(nowMs);
+  lease.state = "expired";
+  lease.expiredAt = lease.expiredAt || now;
+  lease.updatedAt = now;
+  const generation = store.generations[lease.generationId];
+  if (generation?.leaseId === lease.id) {
+    generation.leaseId = "";
+    generation.updatedAt = now;
+  }
+  appendRelayStoreEvent(store, "lease.expired", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId: lease.id,
+    hostId: lease.hostId
+  });
+  return true;
+}
+
+function refreshPortableLeasesForGeneration(store, generationId) {
+  let changed = false;
+  for (const lease of leasesForGeneration(store, generationId)) {
+    changed = refreshPortableLease(store, lease) || changed;
+  }
+  return changed;
+}
+
+function leasesForGeneration(store, generationId) {
+  const generation = store.generations[generationId];
+  let leases = [];
+  if (generation && Array.isArray(generation.leaseIds)) {
+    leases = generation.leaseIds
+      .map((leaseId) => store.leases[leaseId])
+      .filter((lease) => lease?.generationId === generationId);
+  } else {
+    leases = Object.values(store.leases).filter((lease) => lease.generationId === generationId);
+    if (generation) generation.leaseIds = leases.map((lease) => lease.id);
+  }
+  return leases
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
+}
+
+function activeLeaseForGeneration(store, generationId) {
+  refreshPortableLeasesForGeneration(store, generationId);
+  return leasesForGeneration(store, generationId).find((lease) => lease.state === "active") ?? null;
+}
+
+function latestLeaseForGeneration(store, generationId) {
+  refreshPortableLeasesForGeneration(store, generationId);
+  return leasesForGeneration(store, generationId).at(-1) ?? null;
+}
+
+function nextFencingToken(store, generationId) {
+  return leasesForGeneration(store, generationId).reduce((max, lease) => {
+    const value = Number(lease.fencingToken ?? 0);
+    return Number.isFinite(value) && value > max ? value : max;
+  }, 0) + 1;
+}
+
+function claimPortableLease(store, body) {
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId");
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  if (generation.sessionId !== sessionId) throw relayHttpError(409, "generation does not belong to session");
+  const active = activeLeaseForGeneration(store, generationId);
+  if (active) throw relayHttpError(409, "generation already has an active lease");
+  const latest = latestLeaseForGeneration(store, generationId);
+  const reclaimingExpired = latest?.state === "expired";
+  if (reclaimingExpired && body.reclaimExpired !== true) {
+    throw relayHttpError(409, "expired lease requires explicit reclaim");
+  }
+  if (reclaimingExpired) {
+    latest.state = "reclaimed";
+    latest.reclaimedAt = new Date().toISOString();
+    latest.updatedAt = latest.reclaimedAt;
+  }
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const lease = {
+    id: generatedRelayId("lease"),
+    sessionId,
+    generationId,
+    hostId: relayId(body.hostId, "hostId"),
+    adapterId: relayString(body.adapterId ?? generation.adapterId ?? "", "", 160),
+    state: "active",
+    fencingToken: nextFencingToken(store, generationId),
+    token: `lease_${crypto.randomBytes(18).toString("base64url")}`,
+    createdAt: now,
+    updatedAt: now,
+    renewedAt: now,
+    expiresAt: isoFromMs(nowMs + positiveInteger(body.ttlMs, COMMAND_CLAIM_TTL_MS)),
+    releasedAt: "",
+    expiredAt: "",
+    reclaimedAt: ""
+  };
+  store.leases[lease.id] = lease;
+  if (!Array.isArray(generation.leaseIds)) generation.leaseIds = [];
+  appendUnique(generation.leaseIds, lease.id);
+  generation.leaseId = lease.id;
+  generation.hostId = lease.hostId;
+  generation.updatedAt = now;
+  appendRelayStoreEvent(store, reclaimingExpired ? "lease.reclaimed" : "lease.claimed", {
+    sessionId,
+    generationId,
+    leaseId: lease.id,
+    hostId: lease.hostId,
+    fencingToken: lease.fencingToken
+  });
+  return lease;
+}
+
+function requireCurrentLease(store, generationId, body, { requireToken = true } = {}) {
+  const lease = activeLeaseForGeneration(store, generationId);
+  if (!lease) throw relayHttpError(409, "generation has no active lease");
+  const hostId = relayString(body.leaseHostId ?? body.hostId, "", 160);
+  if (hostId !== lease.hostId) throw relayHttpError(409, "stale lease host");
+  if (Number(body.fencingToken) !== Number(lease.fencingToken)) {
+    throw relayHttpError(409, "stale fencing token");
+  }
+  const providedToken = relayString(body.leaseToken ?? body.token, "", 240);
+  if (requireToken && providedToken !== lease.token) {
+    throw relayHttpError(409, "stale lease token");
+  }
+  if (!requireToken && providedToken && providedToken !== lease.token) {
+    throw relayHttpError(409, "stale lease token");
+  }
+  return lease;
+}
+
+function renewPortableLease(store, leaseId, body) {
+  const lease = store.leases[leaseId];
+  if (!lease) throw relayHttpError(404, "lease not found");
+  refreshPortableLease(store, lease);
+  if (lease.state !== "active") throw relayHttpError(409, `lease is ${lease.state}`);
+  requireCurrentLease(store, lease.generationId, {
+    ...body,
+    hostId: body.hostId ?? lease.hostId
+  });
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  lease.updatedAt = now;
+  lease.renewedAt = now;
+  lease.expiresAt = isoFromMs(nowMs + positiveInteger(body.ttlMs, COMMAND_CLAIM_TTL_MS));
+  appendRelayStoreEvent(store, "lease.renewed", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId,
+    hostId: lease.hostId
+  });
+  return lease;
+}
+
+function releasePortableLease(store, leaseId, body) {
+  const lease = store.leases[leaseId];
+  if (!lease) throw relayHttpError(404, "lease not found");
+  refreshPortableLease(store, lease);
+  if (lease.state !== "active") throw relayHttpError(409, `lease is ${lease.state}`);
+  requireCurrentLease(store, lease.generationId, {
+    ...body,
+    hostId: body.hostId ?? lease.hostId
+  });
+  const now = new Date().toISOString();
+  lease.state = "released";
+  lease.releasedAt = now;
+  lease.updatedAt = now;
+  const generation = store.generations[lease.generationId];
+  if (generation?.leaseId === lease.id) {
+    generation.leaseId = "";
+    generation.updatedAt = now;
+  }
+  appendRelayStoreEvent(store, "lease.released", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId,
+    hostId: lease.hostId
+  });
+  return lease;
+}
+
+function updatePortableGeneration(store, generationId, body) {
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  requireCurrentLease(store, generationId, body);
+  const now = new Date().toISOString();
+  if (body.state !== undefined) {
+    const state = relayString(body.state, "", 80);
+    if (!GENERATION_STATES.has(state)) throw relayHttpError(400, "invalid generation state");
+    generation.state = state;
+  }
+  if (body.checkpoint !== undefined) generation.checkpoint = portableRecord(body.checkpoint);
+  if (body.worktree !== undefined) generation.worktree = portableRecord(body.worktree);
+  if (body.nativeSession !== undefined || body.native !== undefined) {
+    generation.nativeSession = portableRecord(body.nativeSession ?? body.native);
+  }
+  if (body.result !== undefined) generation.result = body.result;
+  if (body.error !== undefined) generation.error = body.error;
+  generation.updatedAt = now;
+  appendRelayStoreEvent(store, "generation.updated", {
+    sessionId: generation.sessionId,
+    generationId,
+    state: generation.state
+  });
+  return generation;
+}
+
+function forkPortableGeneration(store, baseGenerationId, body) {
+  const base = store.generations[baseGenerationId];
+  if (!base) throw relayHttpError(404, "base generation not found");
+  requireCurrentLease(store, baseGenerationId, body);
+  const generation = createPortableGeneration(store, {
+    sessionId: base.sessionId,
+    hostId: body.hostId,
+    adapterId: body.adapterId ?? base.adapterId,
+    nativeSession: body.nativeSession ?? {},
+    worktree: body.worktree ?? base.worktree ?? {},
+    checkpoint: body.checkpoint ?? base.checkpoint ?? {},
+    state: body.state ?? "created"
+  }, { baseGenerationId });
+  appendRelayStoreEvent(store, "generation.forked", {
+    sessionId: base.sessionId,
+    generationId: generation.id,
+    baseGenerationId
+  });
+  return generation;
+}
+
+function createPortableHandoff(store, body) {
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId");
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  if (generation.sessionId !== sessionId) throw relayHttpError(409, "generation does not belong to session");
+  const now = new Date().toISOString();
+  const handoff = {
+    id: generatedRelayId("handoff"),
+    sessionId,
+    generationId,
+    fromHostId: relayId(body.fromHostId, "fromHostId", { required: false }),
+    toHostId: relayId(body.toHostId, "toHostId"),
+    state: "requested",
+    transitions: [{ state: "requested", at: now }],
+    error: null,
+    createdAt: now,
+    updatedAt: now
+  };
+  store.handoffs[handoff.id] = handoff;
+  appendRelayStoreEvent(store, "handoff.requested", {
+    sessionId,
+    generationId,
+    handoffId: handoff.id,
+    fromHostId: handoff.fromHostId,
+    toHostId: handoff.toHostId
+  });
+  return handoff;
+}
+
+function transitionPortableHandoff(store, handoffId, body) {
+  const handoff = store.handoffs[handoffId];
+  if (!handoff) throw relayHttpError(404, "handoff not found");
+  const nextState = relayString(body.state, "", 80);
+  if (handoff.state === nextState) return handoff;
+  if (HANDOFF_TERMINAL_STATES.has(handoff.state)) {
+    throw relayHttpError(409, "handoff is terminal");
+  }
+  const currentIndex = HANDOFF_TRANSITIONS.indexOf(handoff.state);
+  const nextIndex = HANDOFF_TRANSITIONS.indexOf(nextState);
+  if (nextState === "failed") {
+    // Failure is terminal from any non-resumed state.
+  } else if (nextIndex < 0 || nextIndex !== currentIndex + 1) {
+    throw relayHttpError(409, "invalid handoff transition");
+  }
+  const now = new Date().toISOString();
+  handoff.state = nextState;
+  handoff.updatedAt = now;
+  if (nextState === "failed") handoff.error = body.error ?? { message: "handoff failed" };
+  handoff.transitions.push({ state: nextState, at: now });
+  appendRelayStoreEvent(store, `handoff.${nextState}`, {
+    sessionId: handoff.sessionId,
+    generationId: handoff.generationId,
+    handoffId
+  });
+  return handoff;
 }
 
 function appendSessionMessage(store, requestedSessionId, body) {
@@ -4445,6 +4865,198 @@ async function route(req, res) {
     device.revokedAt = new Date().toISOString();
     saveStore(store);
     sendJson(res, 200, { ok: true, device: publicDevice(device) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sessions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const session = createPortableSession(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, session });
+    return;
+  }
+
+  const sessionRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const sessionId = decodeURIComponent(sessionRoute[1]);
+    const store = loadStore();
+    const session = store.sessions[sessionId];
+    if (!session) {
+      sendJson(res, 404, { ok: false, error: "session not found" });
+      return;
+    }
+    const payload = publicPortableSession(store, ensureSessionShape(session, sessionId));
+    saveStore(store);
+    sendJson(res, 200, { ok: true, ...payload });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/generations") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = createPortableGeneration(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  const generationRoute = url.pathname.match(/^\/api\/generations\/([^/]+)(?:\/([^/]+))?$/);
+  if (generationRoute && req.method === "GET" && !generationRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const generationId = decodeURIComponent(generationRoute[1]);
+    const store = loadStore();
+    const generation = store.generations[generationId];
+    if (!generation) {
+      sendJson(res, 404, { ok: false, error: "generation not found" });
+      return;
+    }
+    const activeLease = activeLeaseForGeneration(store, generationId);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation, activeLease });
+    return;
+  }
+
+  if (generationRoute && req.method === "POST" && generationRoute[2] === "update") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = updatePortableGeneration(store, decodeURIComponent(generationRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  if (generationRoute && req.method === "POST" && generationRoute[2] === "fork") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = forkPortableGeneration(store, decodeURIComponent(generationRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/leases/claim") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = claimPortableLease(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  const leaseRoute = url.pathname.match(/^\/api\/leases\/([^/]+)(?:\/([^/]+))?$/);
+  if (leaseRoute && req.method === "GET" && !leaseRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const leaseId = decodeURIComponent(leaseRoute[1]);
+    const store = loadStore();
+    const lease = store.leases[leaseId];
+    if (!lease) {
+      sendJson(res, 404, { ok: false, error: "lease not found" });
+      return;
+    }
+    refreshPortableLease(store, lease);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (leaseRoute && req.method === "POST" && leaseRoute[2] === "renew") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = renewPortableLease(store, decodeURIComponent(leaseRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (leaseRoute && req.method === "POST" && leaseRoute[2] === "release") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = releasePortableLease(store, decodeURIComponent(leaseRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/handoffs") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const handoff = createPortableHandoff(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  const handoffRecordRoute = url.pathname.match(/^\/api\/handoffs\/([^/]+)$/);
+  if (handoffRecordRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const handoffId = decodeURIComponent(handoffRecordRoute[1]);
+    const store = loadStore();
+    const handoff = store.handoffs[handoffId];
+    if (!handoff) {
+      sendJson(res, 404, { ok: false, error: "handoff not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  const handoffRoute = url.pathname.match(/^\/api\/handoffs\/([^/]+)\/transition$/);
+  if (handoffRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const handoff = transitionPortableHandoff(store, decodeURIComponent(handoffRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, handoff });
     return;
   }
 
