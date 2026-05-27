@@ -6,6 +6,7 @@ import test from "node:test";
 import { pluginRoot } from "./helpers.mjs";
 
 const pinnedActionRef = /^[a-f0-9]{40}$/;
+const workflowNames = ["ci.yml", "codeql.yml", "publish-npm.yml", "security-scanning.yml"];
 
 function assertActionsPinned(workflow) {
   const matches = [...workflow.matchAll(/uses:\s*([^@\s#]+)@([^\s#]+)/g)];
@@ -15,6 +16,20 @@ function assertActionsPinned(workflow) {
     assert.match(ref, pinnedActionRef, `${action} must be pinned to a commit SHA`);
   }
 }
+
+test("workflows avoid GitHub Actions Node 20 deprecation warnings", async () => {
+  const workflows = await Promise.all(
+    workflowNames.map(async (name) => {
+      const workflowPath = path.join(pluginRoot, ".github", "workflows", name);
+      return fs.readFile(workflowPath, "utf8");
+    }),
+  );
+  const combined = workflows.join("\n");
+
+  assert.doesNotMatch(combined, /actions\/checkout@[a-f0-9]{40}\s*# v4\.2\.2/);
+  assert.doesNotMatch(combined, /gitleaks\/gitleaks-action@/);
+  assert.match(combined, /actions\/checkout@[a-f0-9]{40}\s*# v6\.0\.0/);
+});
 
 test("CI workflow pins actions and avoids checkout credential persistence", async () => {
   const workflowPath = path.join(pluginRoot, ".github", "workflows", "ci.yml");
@@ -67,8 +82,10 @@ test("security scanning workflow covers workflow, shell, and secret scanners", a
   assertActionsPinned(workflow);
   assert.match(workflow, /persist-credentials:\s*false/);
   assert.match(workflow, /zizmorcore\/zizmor-action@[a-f0-9]{40}\s*# v0\.5\.6/);
-  assert.match(workflow, /gitleaks\/gitleaks-action@[a-f0-9]{40}\s*# v2\.3\.9/);
-  assert.match(workflow, /GITLEAKS_ENABLE_COMMENTS:\s*"false"/);
+  assert.match(workflow, /GITLEAKS_VERSION:\s*"8\.30\.1"/);
+  assert.match(workflow, /GITLEAKS_LINUX_X64_SHA256:\s*"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"/);
+  assert.match(workflow, /sha256sum --check gitleaks\.sha256/);
+  assert.match(workflow, /gitleaks detect --source \. --redact --verbose/);
   assert.match(workflow, /raven-actions\/actionlint@[a-f0-9]{40}\s*# v2\.1\.2/);
   assert.match(workflow, /shellcheck self-hosted-relay\/install\.sh self-hosted-relay\/uninstall\.sh/);
   assert.match(workflow, /shellcheck -s sh -e SC2034 self-hosted-relay\/openrc\/legax-relay/);
