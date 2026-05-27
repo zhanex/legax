@@ -13,10 +13,10 @@ Adapter 是 daemon 拥有的一个**独立 Node.js 进程**。它负责：
 - 一个 CLI Agent 的生命周期（启动、重启、停止）。
 - 把手机消息翻译为 CLI 输入。
 - 把 CLI 结构化输出翻译为出站 transport 事件。
-- 通过 `scripts/lib/runtime-state.mjs` 维护自己的 per-agent 运行时状态。
+- 通过 `scripts/lib/runtime-state.mjs` 维护自己的 per-agent 运行时协同状态。
 - 通过 relay 或第三方 transport 上报错误与权限请求。
 
-Adapter **不调用** daemon——通信单向（daemon 监督，adapter 执行）。跨进程状态只通过 `data/runtime-state.json` 交换。
+Adapter **不调用** daemon——通信单向（daemon 监督，adapter 执行）。跨进程 adapter 协同状态只通过 `data/runtime-state.json` 交换。不要把 runtime state 当作可迁移 relay session 的事实来源；这类状态归 `legax.relay/1` relay store。
 
 ## 步骤
 

@@ -13,7 +13,7 @@ Legax 把桌面端编码 Agent 与手机连起来，包括对 Shell 命令和补
 | Self-hosted relay 桌面密钥 | 持有者可作为桌面身份发事件、读取手机回复 | 常量时间比较；`config.yaml` 中 `relay.secret` 为空时拒绝启动，除非显式 `relay.allowInsecureDev: true`，此时 relay 仅绑定 `127.0.0.1` |
 | 已配对浏览器设备 cookie | 持有有效设备 cookie 的人可以读取该浏览器会话的 relay 流量，并提交手机侧回复或审批 | 浏览器通过 daemon 生成的一次性配对码接入；设备 token 只以 relay secret 派生哈希形式保存，可在 relay 设备列表中撤销 |
 | 审批管道（Codex JSON-RPC、Claude permission MCP、Gemini 审批模式） | 自动放行危险命令 | 决策只镜像、不绕过；`paused` 与 `monitor` 模式硬阻断手机端审批 |
-| `data/` 运行期文件（runtime-state、relay-store、mcp-state、relay-audit） | 会话游标、relay 消息队列、审计元数据泄漏 | 仅本机文件系统；已 gitignore；与 `config.yaml` 同一信任域 |
+| `data/` 运行期文件（runtime-state、relay-store、mcp-state、relay-audit） | 会话游标、relay 消息队列、已配对设备元数据、workflow 元数据和审计元数据泄漏 | 仅本机文件系统；已 gitignore；与 `config.yaml` 同一信任域 |
 
 明确不防御以下场景：
 
