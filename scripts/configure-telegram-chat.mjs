@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { telegramApiUrl } from "./lib/telegram-transport.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,9 +60,10 @@ function chatFromUpdate(update) {
     ?? update.chat_member?.chat;
 }
 
-function telegramApiUrl(block, lines, token, method) {
-  const baseUrl = String(fieldValue(lines, block, "apiBaseUrl") || "https://api.telegram.org/bot").replace(/\/+$/, "");
-  return `${baseUrl}${token}/${method}`;
+function normalizeTelegramChatId(value) {
+  const chatId = String(value ?? "").trim();
+  if (!/^-?\d{1,20}$/.test(chatId)) throw new Error("Telegram chat id must be numeric.");
+  return chatId;
 }
 
 async function main() {
@@ -72,7 +74,9 @@ async function main() {
   const token = fieldValue(lines, block, "botToken");
   if (!token) throw new Error("telegram.botToken is empty. Put your bot token in config.yaml first.");
 
-  const response = await fetch(telegramApiUrl(block, lines, token, "getUpdates"));
+  const telegramTransport = { apiBaseUrl: fieldValue(lines, block, "apiBaseUrl") || undefined };
+  // codeql[js/file-access-to-http] Operator config supplies the Telegram endpoint/token; telegramApiUrl validates scheme, host class, token, and method.
+  const response = await fetch(telegramApiUrl(telegramTransport, token, "getUpdates"));
   const body = await response.json();
   if (!response.ok || body.ok !== true) {
     throw new Error(`Telegram getUpdates failed: ${JSON.stringify(body)}`);
@@ -82,14 +86,17 @@ async function main() {
     .map((update) => ({ updateId: update.update_id, chat: chatFromUpdate(update), text: update.message?.text }))
     .filter((item) => item.chat?.id !== undefined);
   if (candidates.length === 0) {
-    const meResponse = await fetch(telegramApiUrl(block, lines, token, "getMe"));
+    // codeql[js/file-access-to-http] Same validated Telegram endpoint/token path as getUpdates above.
+    const meResponse = await fetch(telegramApiUrl(telegramTransport, token, "getMe"));
     const me = await meResponse.json();
     const username = me.result?.username ? `@${me.result.username}` : "this bot";
     throw new Error(`No Telegram chat found. Open ${username}, send /start or any message, then rerun this script.`);
   }
 
   const latest = candidates.at(-1);
-  setField(lines, block, "chatId", String(latest.chat.id));
+  const chatId = normalizeTelegramChatId(latest.chat.id);
+  setField(lines, block, "chatId", chatId);
+  // codeql[js/http-to-file-access] Only the validated numeric Telegram chat id is written back to operator config.
   fs.writeFileSync(configPath, `${lines.join("\n").replace(/\n*$/, "")}\n`, "utf8");
 
   process.stdout.write(`${JSON.stringify({

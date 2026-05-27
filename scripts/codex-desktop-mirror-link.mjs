@@ -335,24 +335,24 @@ class JsonlTailWatcher {
   }
 
   async consumeAppendedBytes() {
-    let stat;
-    try { stat = fs.statSync(this.client.followedFile); }
+    let fd;
+    try { fd = fs.openSync(this.client.followedFile, "r"); }
     catch { this.client.followedFile = null; return; }
-    if (stat.size <= this.client.fileOffset) {
-      // File rotated / truncated: drop and rescan next tick.
-      if (stat.size < this.client.fileOffset) {
-        this.client.fileOffset = 0;
-        this.client.pendingPartial = "";
-      }
-      return;
-    }
-    const fd = fs.openSync(this.client.followedFile, "r");
     try {
+      const stat = fs.fstatSync(fd);
+      if (stat.size <= this.client.fileOffset) {
+        // File rotated / truncated: drop and rescan next tick.
+        if (stat.size < this.client.fileOffset) {
+          this.client.fileOffset = 0;
+          this.client.pendingPartial = "";
+        }
+        return;
+      }
       const length = stat.size - this.client.fileOffset;
       const buf = Buffer.alloc(length);
-      fs.readSync(fd, buf, 0, length, this.client.fileOffset);
-      this.client.fileOffset = stat.size;
-      const text = this.client.pendingPartial + buf.toString("utf8");
+      const bytesRead = fs.readSync(fd, buf, 0, length, this.client.fileOffset);
+      this.client.fileOffset += bytesRead;
+      const text = this.client.pendingPartial + buf.subarray(0, bytesRead).toString("utf8");
       const lines = text.split("\n");
       this.client.pendingPartial = lines.pop() ?? "";
       for (const line of lines) {

@@ -28,6 +28,10 @@ function sha256Base64(text) {
   return crypto.createHash("sha256").update(text).digest("base64");
 }
 
+function sha256Base64url(text) {
+  return crypto.createHash("sha256").update(text).digest("base64url");
+}
+
 async function tempDir(prefix) {
   await fs.mkdir(dataDir, { recursive: true });
   return fs.mkdtemp(path.join(dataDir, `${prefix}-${process.pid}-`));
@@ -104,6 +108,41 @@ test("checkpoint artifacts encrypt safe bundles and restore without plaintext re
 
   await fs.writeFile(path.join(restoreRoot, "src", "app.txt"), "local user work\n", "utf8");
   assert.throws(() => restoreCheckpointBundle(restoredBundle, { targetDir: restoreRoot }), /conflict/i);
+});
+
+test("checkpoint restore skips unchanged files before overwriting existing paths", async (t) => {
+  const restoreRoot = await tempDir("checkpoint-restore-skip");
+  t.after(async () => {
+    await fs.rm(restoreRoot, { recursive: true, force: true });
+  });
+
+  const bundle = {
+    schema: "legax.checkpoint/1",
+    sessionId: "session-checkpoint",
+    generationId: "gen-checkpoint",
+    files: [{
+      path: "src/app.txt",
+      encoding: "base64",
+      content: Buffer.from("restored\n").toString("base64url"),
+      size: 9,
+      sha256: sha256Base64url("restored\n")
+    }]
+  };
+
+  const first = restoreCheckpointBundle(bundle, { targetDir: restoreRoot });
+  assert.deepEqual(first.written.map((entry) => entry.path), ["src/app.txt"]);
+
+  const second = restoreCheckpointBundle(bundle, { targetDir: restoreRoot });
+  assert.deepEqual(second.written, []);
+  assert.deepEqual(second.skipped, [{ path: "src/app.txt", reason: "unchanged" }]);
+
+  await fs.writeFile(path.join(restoreRoot, "src", "app.txt"), "local user work\n", "utf8");
+  assert.throws(() => restoreCheckpointBundle(bundle, { targetDir: restoreRoot }), /conflict/i);
+  assert.equal(await fs.readFile(path.join(restoreRoot, "src", "app.txt"), "utf8"), "local user work\n");
+
+  const overwritten = restoreCheckpointBundle(bundle, { targetDir: restoreRoot, allowOverwrite: true });
+  assert.deepEqual(overwritten.written.map((entry) => entry.path), ["src/app.txt"]);
+  assert.equal(await fs.readFile(path.join(restoreRoot, "src", "app.txt"), "utf8"), "restored\n");
 });
 
 test("checkpoint restore rejects traversal and symlink escape attempts", async (t) => {

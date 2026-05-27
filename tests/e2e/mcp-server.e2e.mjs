@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { fetchJson, pluginRoot, removeTempFiles, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+import { fetchJson, pluginRoot, removeTempFiles, startRelay, writeTempConfig } from "./helpers.mjs";
 
 test("MCP bridge sends to relay and polls phone replies", async (t) => {
   const relay = await startRelay(t, { sessionId: "mcp-e2e" });

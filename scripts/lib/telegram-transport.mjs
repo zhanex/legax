@@ -1,6 +1,47 @@
+const TELEGRAM_METHODS = new Set([
+  "answerCallbackQuery",
+  "deleteMessage",
+  "editMessageText",
+  "getChat",
+  "getMe",
+  "getUpdates",
+  "pinChatMessage",
+  "sendMessage"
+]);
+
+function isLoopbackHostname(hostname) {
+  const value = String(hostname ?? "").toLowerCase().replace(/^\[|\]$/g, "");
+  return value === "localhost"
+    || value === "::1"
+    || value === "0:0:0:0:0:0:0:1"
+    || /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function telegramApiBaseUrl(transport) {
+  const raw = String(transport?.apiBaseUrl ?? "https://api.telegram.org/bot").trim();
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("invalid Telegram apiBaseUrl");
+  }
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("Telegram apiBaseUrl must use HTTPS or loopback HTTP.");
+  }
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+    throw new Error("Telegram apiBaseUrl must use HTTPS or loopback HTTP.");
+  }
+  parsed.hash = "";
+  parsed.search = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 export function telegramApiUrl(transport, token, method) {
-  const baseUrl = String(transport.apiBaseUrl ?? "https://api.telegram.org/bot").replace(/\/+$/, "");
-  return `${baseUrl}${token}/${method}`;
+  const safeMethod = String(method ?? "");
+  if (!TELEGRAM_METHODS.has(safeMethod)) throw new Error(`unsupported Telegram method: ${safeMethod}`);
+  const safeToken = String(token ?? "").trim();
+  if (!/^[A-Za-z0-9:_-]{1,256}$/.test(safeToken)) throw new Error("invalid Telegram bot token");
+  return `${telegramApiBaseUrl(transport)}${safeToken}/${safeMethod}`;
 }
 
 export function telegramCreatedAt(message) {

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { buildTelegramMessagePayloads } from "./lib/outbound-transports.mjs";
+import { telegramApiUrl } from "./lib/telegram-transport.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
 import { serverInfo } from "./lib/version.mjs";
@@ -367,11 +368,14 @@ async function httpJson(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // codeql[js/file-access-to-http] MCP tools intentionally send operator-provided messages to configured relay/transports.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
+      // codeql[js/file-access-to-http] Header fields are operator-configured MCP transport metadata.
       headers: {
         ...(options.body ? { "content-type": "application/json" } : {}),
+        // codeql[js/file-access-to-http] Headers come from operator-owned MCP transport configuration.
         ...(options.headers ?? {})
       }
     });
@@ -427,11 +431,6 @@ async function sendViaRelay(transport, event) {
     headers,
     body: JSON.stringify(event)
   }, transport.timeoutMs);
-}
-
-function telegramApiUrl(transport, token, method) {
-  const baseUrl = String(transport.apiBaseUrl ?? "https://api.telegram.org/bot").replace(/\/+$/, "");
-  return `${baseUrl}${token}/${method}`;
 }
 
 async function sendViaTelegram(config, transport, event) {

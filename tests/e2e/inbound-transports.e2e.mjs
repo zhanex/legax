@@ -4,7 +4,31 @@ import path from "node:path";
 import test from "node:test";
 import { pollInboundTransports } from "../../scripts/lib/inbound-transports.mjs";
 import { buildTelegramMessagePayloads, dispatchAdditionalTransports } from "../../scripts/lib/outbound-transports.mjs";
+import { telegramApiUrl } from "../../scripts/lib/telegram-transport.mjs";
 import { dataDir, removeTempFiles } from "./helpers.mjs";
+
+test("Telegram API URLs reject token path injection and non-loopback HTTP endpoints", () => {
+  assert.equal(
+    telegramApiUrl({ apiBaseUrl: "http://127.0.0.1:8787/bot" }, "test-token", "getUpdates"),
+    "http://127.0.0.1:8787/bottest-token/getUpdates"
+  );
+  assert.equal(
+    telegramApiUrl({}, "123:ABC_def-456", "sendMessage"),
+    "https://api.telegram.org/bot123:ABC_def-456/sendMessage"
+  );
+  assert.throws(
+    () => telegramApiUrl({ apiBaseUrl: "http://example.com/bot" }, "test-token", "getUpdates"),
+    /must use HTTPS or loopback HTTP/i
+  );
+  assert.throws(
+    () => telegramApiUrl({ apiBaseUrl: "https://api.telegram.org/bot" }, "../secret", "getUpdates"),
+    /invalid Telegram bot token/i
+  );
+  assert.throws(
+    () => telegramApiUrl({}, "test-token", "../getMe"),
+    /unsupported Telegram method/i
+  );
+});
 
 test("Telegram inbound messages keep default routing, request-id routing, and cursors", async (t) => {
   await fs.mkdir(dataDir, { recursive: true });

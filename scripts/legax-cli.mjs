@@ -65,6 +65,24 @@ function randomSecret() {
   return crypto.randomBytes(32).toString("base64url");
 }
 
+function writeTextFileAtomically(filePath, body, { mode = 0o600 } = {}) {
+  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`);
+  let completed = false;
+  try {
+    fs.writeFileSync(tempPath, body, { encoding: "utf8", flag: "wx", mode });
+    fs.renameSync(tempPath, filePath);
+    completed = true;
+  } finally {
+    if (!completed) {
+      try { fs.rmSync(tempPath, { force: true }); } catch {}
+    }
+  }
+}
+
+function writeNewTextFile(filePath, body, { mode = 0o600 } = {}) {
+  fs.writeFileSync(filePath, body, { encoding: "utf8", flag: "wx", mode });
+}
+
 function packageVersion() {
   try {
     return JSON.parse(fs.readFileSync(packageAssetPath("package.json"), "utf8")).version ?? "0.0.0";
@@ -77,17 +95,22 @@ function initConfig(args) {
   const configPath = configPathFromArgs(args);
   const force = hasOption(args, "--force");
   const json = hasOption(args, "--json");
-  if (fs.existsSync(configPath) && !force) {
-    process.stderr.write(`config already exists: ${configPath}\n`);
-    process.exit(1);
-  }
   const examplePath = packageAssetPath("config.example.yaml");
   let body = fs.readFileSync(examplePath, "utf8");
   const secret = optionValue(args, "--relay-secret") || randomSecret();
   body = body.replaceAll("replace-with-a-long-random-secret", secret);
   body = body.replaceAll("replace-with-a-long-webhook-secret", randomSecret());
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, body, "utf8");
+  try {
+    if (force) writeTextFileAtomically(configPath, body);
+    else writeNewTextFile(configPath, body);
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      process.stderr.write(`config already exists: ${configPath}\n`);
+      process.exit(1);
+    }
+    throw error;
+  }
   writeOutput({ ok: true, configPath, message: `Created config: ${configPath}` }, json);
 }
 

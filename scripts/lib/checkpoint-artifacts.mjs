@@ -365,27 +365,91 @@ function restorePath(targetRoot, relativePath) {
   return { normalized, absolutePath };
 }
 
+function ensureRestoreParent(targetRoot, absolutePath) {
+  const parent = path.dirname(absolutePath);
+  fs.mkdirSync(parent, { recursive: true });
+  const realParent = fs.realpathSync(parent);
+  if (!pathInside(targetRoot, realParent)) throw new Error("refusing symlink escape in restore parent");
+}
+
+function writeNewRestoreFile(absolutePath, content, mode) {
+  const fd = fs.openSync(absolutePath, "wx", mode);
+  try {
+    fs.writeFileSync(fd, content);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeRestoreFileAtomically(absolutePath, content, mode) {
+  const parent = path.dirname(absolutePath);
+  const tempPath = path.join(parent, `.${path.basename(absolutePath)}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`);
+  let completed = false;
+  try {
+    writeNewRestoreFile(tempPath, content, mode);
+    fs.renameSync(tempPath, absolutePath);
+    completed = true;
+  } finally {
+    if (!completed) {
+      try { fs.rmSync(tempPath, { force: true }); } catch {}
+    }
+  }
+}
+
+function readExistingRestoreFile(absolutePath, normalized) {
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+  let fd;
+  try {
+    fd = fs.openSync(absolutePath, flags);
+  } catch (error) {
+    if (error.code === "ELOOP") throw new Error(`refusing final file symlink: ${normalized}`);
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.isDirectory()) throw new Error(`restore target is a directory: ${normalized}`);
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function restoreCheckpointBundle(bundle, { targetDir, allowOverwrite = false } = {}) {
   if (!targetDir) throw new Error("targetDir is required");
   if (bundle?.schema !== CHECKPOINT_BUNDLE_SCHEMA) throw new Error("unsupported checkpoint bundle schema");
   const targetRoot = ensureRestoreTarget(targetDir);
   const written = [];
   const conflicts = [];
+  const skipped = [];
   for (const file of bundle.files ?? []) {
     const { normalized, absolutePath } = restorePath(targetRoot, file.path);
     const content = fromBase64url(file.content, `file ${normalized}`);
     if (file.sha256 && sha256(content) !== file.sha256) {
       throw new Error(`checksum mismatch for ${normalized}`);
     }
-    if (fs.existsSync(absolutePath)) {
-      const existing = fs.readFileSync(absolutePath);
-      if (sha256(existing) !== file.sha256 && !allowOverwrite) {
+    ensureRestoreParent(targetRoot, absolutePath);
+    try {
+      writeNewRestoreFile(absolutePath, content, file.mode ?? 0o600);
+      written.push({ path: normalized, size: content.length, sha256: sha256(content) });
+      continue;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    if (file.sha256) {
+      const existing = readExistingRestoreFile(absolutePath, normalized);
+      if (sha256(existing) === file.sha256) {
+        skipped.push({ path: normalized, reason: "unchanged" });
+        continue;
+      }
+      if (!allowOverwrite) {
         conflicts.push({ path: normalized, reason: "local changes" });
         continue;
       }
+    } else if (!allowOverwrite) {
+      conflicts.push({ path: normalized, reason: "local changes" });
+      continue;
     }
-    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-    fs.writeFileSync(absolutePath, content, { mode: file.mode ?? 0o600 });
+    writeRestoreFileAtomically(absolutePath, content, file.mode ?? 0o600);
     written.push({ path: normalized, size: content.length, sha256: sha256(content) });
   }
   if (conflicts.length > 0) {
@@ -397,6 +461,6 @@ export function restoreCheckpointBundle(bundle, { targetDir, allowOverwrite = fa
     ok: true,
     targetDir: targetRoot,
     written,
-    skipped: []
+    skipped
   };
 }
