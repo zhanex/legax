@@ -4,7 +4,7 @@
 
 Legax 可以把 Agent 事件投递到飞书或 Lark 自建应用 bot，并通过 relay 的飞书事件端点接收文本回复和审批按钮决策。
 
-如果团队已经把飞书中国区或 Lark 国际区作为移动工作台，又希望获得类似 Telegram 的远程控制入口，可以启用这个 transport；Codex、Claude Code、Gemini CLI 和 OpenCode 的原生审批模型不会被改变。
+如果团队已经把飞书中国区或 Lark 国际区作为移动工作台，又希望获得类似 Telegram 的远端交互入口，可以启用这个 transport；受支持 Agent CLI 的原生审批模型不会被改变。
 
 ## 当前范围
 

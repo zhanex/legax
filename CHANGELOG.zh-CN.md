@@ -28,4 +28,4 @@
 
 ## 0.0.1
 
-- 初始实现 local-first relay、daemon、MCP、Telegram、Codex、Claude Code、Gemini CLI 和 self-hosted relay。
+- 初始实现 relay、daemon、MCP、Telegram、受支持 Agent CLI 适配器和 self-hosted relay。

@@ -10,7 +10,7 @@ The relay store is the relay-owned persistence file behind `relay.storePath`. De
 
 - `data/relay-store.json` is portable relay state. It owns relay sessions, generation metadata, devices, inbox/command/event metadata, artifacts, and workflow definitions/runs.
 - `data/runtime-state.json` is local daemon and adapter coordination state. It owns cursors, dynamic modes, selected local sessions, per-agent queues, and launch requests.
-- CLI-native history remains owned by Codex, Claude Code, Gemini CLI, and OpenCode. Native CLI session ids are implementation details inside relay generations, not stable relay session ids.
+- CLI-native history remains owned by each supported agent CLI. Native CLI session ids are implementation details inside relay generations, not stable relay session ids.
 
 ## Top-Level Shape
 

@@ -158,7 +158,7 @@ npm install -g legax
 legax init
 ```
 
-开发机推荐安装完整 `legax` 包，因为它包含 `init`、`doctor`、relay helper、daemon control 和配对命令。如果只安装 `@legax/daemon`，需要另行生成或复制 `config.yaml`，然后使用 `legax-daemon-control start`、`legax-daemon-control status` 和 `legax-daemon-control pair`，而不是 `legax daemon ...` 包装命令。
+开发机推荐安装完整 `legax` 包，因为它包含 `init`、`doctor`、relay helper、daemon control 和配对命令。如果只安装 `@legax/daemon`，需要另行生成或复制 `config.yaml`，然后使用 `legax-daemon-control start`、`legax-daemon-control status` 和 `legax-daemon-control pair`；`legax daemon ...` 包装命令只随完整包提供。
 
 编辑开发机 `config.yaml`，让 relay 设置与服务器匹配：
 
@@ -233,7 +233,7 @@ relay 和 daemon 都运行后：
 2. 如果启用了多个 adapter，先选择目标 agent。
 3. 从手机发送一条简短回复。
 4. 确认 daemon 收到并路由了这条消息。
-5. 触发一次 agent 审批，确认 Legax 是镜像原生审批请求，而不是绕过它。
+5. 触发一次 agent 审批，确认 Legax 镜像原生审批请求，并通过原生回调返回决策。
 
 Legax 只会镜像原生审批提示，并通过受支持的结构化路径返回决策。它不能模拟 UI 点击，也不能自动批准 agent 安全提示。
 

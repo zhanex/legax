@@ -36,7 +36,7 @@ Follow `.github/CONTRIBUTING.md` when preparing changes for commit:
 
 ## Architecture
 
-The project is a local-first relay layer that bridges coding-agent CLIs (Codex, Claude Code, Gemini CLI, OpenCode) to a phone via self-hosted relay, Telegram, or webhook. Read `docs/ARCHITECTURE.md` first — the design uses **three planes** that must not be conflated when changing code:
+The project is a session-management and workflow orchestration layer for agent CLIs. It connects supported agent CLIs to remote interaction surfaces through relay, Telegram, Feishu/Lark, or webhook transports. Read `docs/ARCHITECTURE.md` first — the design uses **three planes** that must not be conflated when changing code:
 
 - **Control plane (CLI adapters)** — owns process lifecycle, session selection/continuation, and structured-output parsing. One adapter per agent under `scripts/`: `codex-app-server-link.mjs` (JSON-RPC over WebSocket app-server), `claude-code-link.mjs` (`claude -p` stream-json), `gemini-cli-link.mjs` (`gemini` stream-json), `opencode-link.mjs` (OpenCode HTTP server). Each adapter is a long-lived process; the daemon supervises them.
 - **Capability plane (MCP)** — `scripts/mcp-server.mjs` is a generic stdio MCP server exposing `legax_send/poll/request_permission/status`. `scripts/claude-permission-mcp-server.mjs` is a Claude-specific permission-prompt MCP that mirrors permission asks to the phone and returns the decision through Claude's permission hook. MCP is a **capability layer, not a lifecycle manager** — never use it to start/stop processes.

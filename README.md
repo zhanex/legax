@@ -1,15 +1,15 @@
 <div align="center">
 
-<h1>Legax: Universal Remote Control & Relay for AI Coding Agents</h1>
+<h1>Legax: Remote Operations, Session Management, and Workflow Orchestration Across Devices and Agent CLIs</h1>
 
 <p>
   English | <a href="README.zh-CN.md">Simplified Chinese</a>
 </p>
 
-<p><strong>Control Codex, Claude Code, Gemini CLI, and OpenCode from your phone or any device.</strong></p>
+<p><strong>Legax gives you one place for remote operations, session management, and workflow orchestration across devices and agent CLIs. Choose the machine, CLI, project, and session; answer prompts; handle approvals; hand work over; and keep longer tasks inside a controlled workflow.</strong></p>
 
 <p>
-  Legax is a local-first remote control layer for AI coding agents. It forwards important agent events to your phone, routes replies back to the selected CLI/project/session, and returns supported approval decisions through each agent's native callback path.
+  Supported agent CLIs today: Codex CLI, Claude Code, Gemini CLI, and OpenCode.
 </p>
 
 <p>
@@ -24,6 +24,39 @@
 
 </div>
 
+## In Plain Terms
+
+Legax is a control layer for people who use more than one agent CLI.
+
+The problem is simple: every agent CLI has its own session list, approval prompts, command output, and way to continue work. If you also use more than one machine, those choices spread across devices too. When a task gets longer, or when you step away from the main terminal, it becomes hard to know which session needs attention and where the next reply should go.
+
+Legax puts those decisions in one remote session layer. From a browser, mobile device, Telegram, Feishu/Lark, or webhook, you can pick the target machine, agent CLI, project, and session, then send the next instruction back to the right place.
+
+## What You Can Do
+
+- Continue the right agent CLI session from a remote surface, even when multiple machines are connected to the same relay.
+- Send a reply to the selected CLI, project/chat, and session.
+- See supported native approval prompts and return an approve or deny decision through the agent's own callback path.
+- Keep long-running work tied to a Legax task identity, with session history, generations, leases, handoffs, forks, and encrypted checkpoints.
+- Move work between supported agent CLIs or daemon hosts when the task changes or one tool is a better fit.
+- Use workflows to describe the software-development process in engineering terms, then let the right CLI run the right step.
+
+## Why It Matters
+
+Many remote tools start from terminal access or hosted execution. Legax starts from the task: which agent CLI, which project, which session, which approval, which handoff, and which workflow evidence.
+
+That focus gives Legax a different shape:
+
+| Need | Legax approach |
+| --- | --- |
+| Remote access | Use browser pairing, mobile surfaces, Telegram, Feishu/Lark, or webhook actions. |
+| Cross-device session sync | Keep relay-managed task/session identity, leases, handoffs, and checkpoints visible to multiple connected daemon hosts. Native CLI histories remain owned by each CLI. |
+| Session management | Route by machine, agent CLI, project/chat, and session, with terminal windows no longer being the unit of work. |
+| Approval handling | Mirror supported native approval prompts through supported agent callback paths. |
+| Longer tasks | Track task identity, leases, handoffs, forks, checkpoints, and inbox items in the relay store. |
+| Workflow orchestration | Define the development process as workflow steps and send each step to the CLI that fits it best. |
+| Multiple agent CLIs | Keep adapters under one daemon and switch targets from the remote layer. |
+
 ## Try It In 30 Seconds
 
 Use `npx` when you just want to create a config and verify the local runtime:
@@ -33,7 +66,7 @@ npx legax@latest init
 npx legax@latest doctor --offline
 ```
 
-For a local phone pairing demo, keep the relay and daemon in separate terminals:
+For a local pairing demo, keep the relay and daemon in separate terminals:
 
 ```bash
 # Terminal 1
@@ -46,43 +79,44 @@ npx legax@latest daemon start:bg
 npx legax@latest daemon pair
 ```
 
-Open the printed pair URL from your phone, or scan the QR code. For a real phone outside the same machine or LAN, the relay must be reachable from the phone; see the [User Manual](docs/USER_MANUAL.md) for the split relay setup.
+Open the printed pair URL from a browser or mobile device, or scan the QR code. If the interaction device is outside the same machine or LAN, the relay must be reachable from that device; see the [User Manual](docs/USER_MANUAL.md) for the split relay setup.
 
-## Why Developers Want It
+Telegram and Feishu/Lark are optional. When a relay transport is enabled, the relay owns Telegram polling/webhooks, Feishu/Lark callbacks, outbound fan-out, and message routing. Direct daemon or adapter Telegram polling remains only a no-relay fallback.
 
-Coding agents often need attention after you leave the desk: a permission prompt, a clarification, a finished run, or a session you want to continue from another room. Legax keeps that loop on infrastructure you control.
+## What Ships Today
 
-| Problem | Legax path |
+| Area | Current support |
 | --- | --- |
-| You miss approval prompts while away from the computer. | Forward supported native approvals to your phone and return the decision through the agent callback. |
-| You need to continue a local session remotely. | Route phone replies to the selected CLI, project, and session. |
-| You want phone access without exposing terminal control. | Use relay pairing, Telegram/Feishu buttons, and adapter APIs instead of UI scraping. |
-| Your team uses multiple agent CLIs. | Run Codex, Claude Code, Gemini CLI, and OpenCode adapters under one daemon. |
-
-## Feature Matrix
-
-| Feature | Codex CLI | Claude Code CLI | Gemini CLI | Legax |
-| --- | --- | --- | --- | --- |
-| Phone or browser remote control | Limited to native surfaces | No general phone relay | No general phone relay | Web UI, Telegram, Feishu/Lark, webhook |
-| Multi-agent routing | No | No | No | Codex, Claude Code, Gemini CLI, OpenCode |
-| Self-hosted relay | No | No | No | Yes |
-| Cross-device session selection | No | No | No | CLI, project/chat, and session menus |
-| Native approval mirroring | Codex only | Claude only | Gemini only | Supported native paths across adapters |
-| MCP tools for agent workflows | Host-specific | Host-specific | Host-specific | Generic Legax MCP server |
+| Agent CLIs | Codex CLI, Claude Code, Gemini CLI, OpenCode |
+| Remote surfaces | Relay web UI, browser pairing, mobile browser, Telegram Bot API, Feishu/Lark app bot, outbound webhook notifications |
+| Cross-device session sync | Multiple daemon hosts can connect to one relay; relay-managed sessions, generations, leases, handoffs, forks, and checkpoints stay visible across those hosts |
+| Session routing | CLI, project/chat, and session selection from relay, Telegram, and Feishu/Lark actions |
+| Relay-managed task state | Sessions, generations, leases, handoffs, forks, encrypted checkpoint artifacts, inbox items |
+| Workflow orchestration | Restricted workflow DSL, built-in LPS TDD actions, gates, retries, required evidence, relay command queue |
+| Native approvals | Codex JSON-RPC, Claude permission-prompt MCP, Gemini CLI approval mode |
+| Runtime state | Local JSON state for adapter cursors, selected sessions, inbox queues, and launch requests |
+| Codex plugin | Installable plugin bundle with Legax skill and MCP tools |
 
 OpenCode text routing works through `opencode serve`; OpenCode-native permission callback bridging is not implemented yet.
 
 ## How It Works
 
 ```mermaid
-graph LR
-  A["Agent CLI: Codex / Claude / Gemini / OpenCode"] <--> B["Legax Daemon"]
-  B <--> C{"Self-hosted Relay / Telegram / Feishu"}
-  C <--> D["Phone: Web UI / Telegram / Feishu"]
-  B <--> E["Legax MCP Tools"]
+flowchart LR
+  Remote["Remote surfaces\nBrowser / mobile / Telegram / Feishu-Lark / webhook"] <--> Relay["Relay\npairing, routing, task state, workflows"]
+  Relay <--> Daemons["Daemons on one or more hosts\nhost heartbeat, adapter supervisor, command worker"]
+  Daemons <--> Adapters["Adapters\nCodex / Claude / Gemini / OpenCode"]
+  Adapters <--> Agents["Native agent CLIs\nsessions, prompts, approvals"]
+  Tools["Legax MCP tools\nsend / poll / permission"] <--> Relay
+  Tools <--> Agents
 ```
 
-The daemon owns process supervision, inbound routing, session selection, and on-demand launches. Adapters own each CLI's lifecycle and session model. MCP tools are capabilities for agents, not lifecycle managers.
+Legax has four runtime roles:
+
+- Relay: runs on a machine, VPS, NAS, or server chosen by the operator. It handles remote surfaces, paired devices, message routing, inbox items, task sessions, generations, leases, handoffs, artifacts, workflow definitions/runs, connected hosts, and host commands.
+- Daemon: runs on each development host where agent CLIs are installed. Multiple daemons can connect to the same relay. Each daemon sends host heartbeats, supervises local adapters, pulls remote messages, claims allowlisted command refs, and writes results back.
+- Adapter: one adapter per agent CLI. It lists sessions, selects sessions, sends text to the CLI, parses structured output, and mirrors native approval callbacks when available.
+- MCP capability server: exposes `send`, `poll`, `request_permission`, and `status` tools to host agents. It provides capabilities only; the daemon owns process lifecycle.
 
 ## Install For Daily Use
 
@@ -113,27 +147,29 @@ Use the AI-facing install guide as your execution checklist:
 Follow the guide exactly. Do not print secrets or commit local config/runtime files. Ask me before creating DNS records, exposing ports, rotating secrets, changing npm auth, or selecting a Telegram or Feishu/Lark chat. Finish by running the validation commands from the guide and summarize the config paths, enabled transports, enabled agent CLIs, and any remaining manual steps.
 ```
 
-## What Ships Today
+## Current Limits And Roadmap
 
-| Area | Current support |
-| --- | --- |
-| Agent adapters | Codex, Claude Code, Gemini CLI, OpenCode |
-| Phone transports | Self-hosted relay web UI, Telegram Bot API, Feishu/Lark app bot, outbound webhook notifications |
-| Native approvals | Codex JSON-RPC, Claude permission-prompt MCP, Gemini CLI approval mode |
-| Session routing | CLI, project/chat, and session selection from relay, Telegram, and Feishu/Lark actions |
-| Codex plugin | Installable plugin bundle with Legax skill and MCP tools |
-| Runtime state | Local JSON state for adapter cursors, selected sessions, inbox queues, and launch requests |
+Legax already handles remote session routing, native approval mirroring where adapters support it, relay-managed task state across connected hosts, and restricted workflow runs. Some higher-level scheduling ideas are roadmap work:
 
-## Developer Experience
+- assign tasks across multiple subscribed agent plans while preserving project context;
+- route workflow steps to the CLI and model that fit that step best;
+- switch away from an agent when a CLI degrades, fails, or becomes temporarily constrained;
+- use cost, quality, availability, and context continuity as explicit routing signals.
+
+## Developer Links
 
 | Need | Start here |
 | --- | --- |
 | Minimal config | [examples/config.example.minimal.yaml](examples/config.example.minimal.yaml) |
 | Example walkthrough | [examples/README.md](examples/README.md) |
-| Claude Code integration review | [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) |
-| Claude Code example | [examples/claude-code/README.md](examples/claude-code/README.md) |
-| Adapter conformance checklist | [docs/ADAPTER_CONFORMANCE.md](docs/ADAPTER_CONFORMANCE.md) |
 | Full setup guide | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) |
+| AI-facing install guide | [docs/AI_INSTALL.md](docs/AI_INSTALL.md) |
+| Adapter behavior | [docs/ADAPTERS.md](docs/ADAPTERS.md) |
+| Claude Code integration review | [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) |
+| Adapter conformance checklist | [docs/ADAPTER_CONFORMANCE.md](docs/ADAPTER_CONFORMANCE.md) |
+| Relay store schema | [docs/RELAY_STORE.md](docs/RELAY_STORE.md) |
+| Protocol and workflow contracts | [docs/LEGAX_PROTOCOL.md](docs/LEGAX_PROTOCOL.md) |
+| Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | AI/LLM repository context | [docs/context_for_llms.md](docs/context_for_llms.md) |
 | Codespaces | [Open this repo in Codespaces](https://codespaces.new/zhanex/legax) |
 
@@ -148,17 +184,17 @@ This is a dependency-free Node.js project. Everything runs against the Node 18+ 
 | `legax relay start` | Start the development relay. |
 | `legax daemon start` | Start the unified daemon and enabled adapters in the foreground. |
 | `legax daemon start:bg` | Start the daemon in the background for local demos and pairing. |
-| `legax daemon pair` | Print a short-lived phone pairing URL and QR payload. |
+| `legax daemon pair` | Print a short-lived pairing URL and QR payload. |
 | `legax doctor` | Run full diagnostics after the relay is reachable. |
 
 ## Deployment Choices
 
 | Deployment | Use it when |
 | --- | --- |
-| Local all-in-one | You are trying Legax on one machine, or the phone can reach the relay URL you configured. |
+| Local all-in-one | You are trying Legax on one machine, or the interaction device can reach the relay URL you configured. |
 | Split relay and daemon | A public VPS, NAS, or server hosts the relay while agent CLIs stay on a private development machine. |
 | Telegram-first | You prefer Telegram messages and buttons over the browser relay UI. |
-| Feishu/Lark-first | Your team uses Feishu China or Lark global for mobile work notifications. |
+| Feishu/Lark-first | Your team uses Feishu China or Lark global for work notifications. |
 
 The project does not operate a hosted backend, shared relay, shared Telegram bot, or shared Feishu/Lark app. You choose where data goes by configuring the transports.
 
@@ -168,7 +204,7 @@ This repository is also structured as an installable Codex plugin:
 
 - [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json) is the plugin manifest.
 - [`.mcp.json`](.mcp.json) registers the Legax MCP server.
-- [`skills/legax/SKILL.md`](skills/legax/SKILL.md) tells Codex when and how to use the phone relay tools.
+- [`skills/legax/SKILL.md`](skills/legax/SKILL.md) tells Codex when and how to use the Legax relay tools.
 - [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) exposes the root plugin through a repo marketplace for local or team testing.
 
 See the [Codex Plugin Guide](docs/CODEX_PLUGIN.md) for install commands, release-candidate checks, and the current official Plugin Directory status.
@@ -194,6 +230,8 @@ Read the [Privacy Notice](docs/PRIVACY.md), [Security Policy](.github/SECURITY.m
 | Review the Claude Code integration | [Claude Code Integration](docs/CLAUDE_CODE_INTEGRATION.md) |
 | Install or review the Codex plugin | [Codex Plugin Guide](docs/CODEX_PLUGIN.md) |
 | Understand architecture | [Architecture](docs/ARCHITECTURE.md) |
+| Understand relay-owned state | [Relay Store](docs/RELAY_STORE.md) |
+| Understand protocol and workflows | [Legax Protocol](docs/LEGAX_PROTOCOL.md) |
 | Understand product boundaries | [Functional Boundaries](docs/FUNCTIONAL_BOUNDARIES.md) |
 | Review adapter requirements | [Adapter Conformance](docs/ADAPTER_CONFORMANCE.md) |
 | Extend the project | [Extending Legax](docs/EXTENDING.md) |

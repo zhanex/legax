@@ -6,7 +6,7 @@
 
 ## 一段话理解项目
 
-Legax 是面向 AI 编码 Agent CLI 的 local-first 远程控制与 relay 层。它让手机或 Telegram 用户可以监看 Agent 事件、选择 CLI/项目/会话、回复选中的 Agent，并批准或拒绝受支持的原生权限提示。它不是托管 IDE、终端 UI 自动化层，也不是绕过 Agent 安全策略的通道。
+Legax 管理多个 Agent CLI 之间的 session 路由、任务身份、审批、交接和受控工作流。远端交互入口可以监看 Agent 事件、选择 CLI/项目/session、回复选中的 Agent，并批准或拒绝受支持的原生权限提示。托管 IDE、终端 UI 自动化和绕过 Agent 安全策略不属于项目范围。
 
 ## 核心边界
 

@@ -103,9 +103,9 @@ security:
 # 这份 config.yaml 已经在 .gitignore，需要轮换任何密钥时直接改这里即可。
 # 推荐默认：只启用 `self-hosted-relay`。Telegram 与 webhook 在本模板里保持关闭；
 # 启用前请阅读 docs/ARCHITECTURE.zh-CN.md 中的取舍以及 README.zh-CN.md 的“本机文件与密钥”。
-# 启用 relay transport 时，Telegram 归 relay 所有：relay 轮询 getUpdates
+# 启用 relay transport 时，Telegram 由 relay 接管：relay 轮询 getUpdates
 # （或接收 /api/telegram/events webhook），将入站内容归一化写入 /api/messages，
-# 并把桌面端 /api/events fan-out 回 Telegram。daemon/adapter 只在无 relay 时保留直连兜底。
+# 并把桌面端 /api/events 分发回 Telegram。daemon/adapter 只在没有 relay 时保留直连兜底。
 transports:
   - name: self-hosted-relay
     type: relay
@@ -315,7 +315,7 @@ gemini:
     telegram:
       messageDetail: final
 
-# OpenCode 适配器。它连接 OpenCode 的 headless HTTP server，而不是抓取 TUI。
+# OpenCode 适配器。它连接 OpenCode 的 headless HTTP server，避免抓取 TUI。
 # 适配器默认出现在菜单中，但按需启动；serverMode: connect-or-start 时，如果
 # serverUrl 不可达，会自动执行 `opencode serve`。
 opencode:

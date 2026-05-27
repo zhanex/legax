@@ -2,12 +2,13 @@
 
 English | [Simplified Chinese](ARCHITECTURE.zh-CN.md)
 
-Legax is a local-first relay layer between coding agent runtimes and phone-side communication channels. The project uses a generic event model so that Codex, Claude Code, Gemini CLI, OpenCode, and future adapters can share the same relay, routing, approval, and notification infrastructure.
+Legax is a session-management and workflow orchestration layer for agent CLIs. The project uses a generic event model so supported agent CLIs and future adapters can share the same routing, approval, notification, relay-store, and workflow infrastructure.
 
 ## Design Goals
 
-- Keep the runtime local by default.
+- Keep execution under the operator's configured host.
 - Let users self-host the relay or configure a third-party transport.
+- Let multiple daemon hosts connect to the same relay while the relay owns portable task/session identity.
 - Support bidirectional text, approval decisions, and user-input requests.
 - Keep the project agent-neutral.
 - Prefer structured CLI protocols over terminal screen parsing.
@@ -30,7 +31,7 @@ MCP is the capability plane:
 - Expose remote notification tools.
 - Integrate with agent-native permission prompt hooks when available.
 
-Communication transports are the phone plane:
+Communication transports are the remote interaction plane:
 
 - Self-hosted relay.
 - Telegram Bot API.
@@ -56,13 +57,13 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - `scripts/simple-relay-server.mjs`
    - Shares HTTP, store, pairing, TWA, Telegram, Feishu, and browser behavior through `scripts/lib/relay-server-core.mjs`.
    - Packaged by `self-hosted-relay/` for Linux installs as a thin launcher plus the shared relay core files.
-   - Provides desktop APIs, phone APIs, and a phone web page.
-   - Routes inbound phone messages by `targetAgentId`.
+   - Provides desktop APIs, remote interaction APIs, and the browser relay page.
+   - Routes inbound remote messages by `targetAgentId`.
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.
    - Uses the first formal relay store schema, `legax.relay/1`. This is not a "V2" format; Legax has not shipped a stable V1 release.
    - Owns portable relay session state, including sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
-   - Treats native Codex, Claude Code, Gemini CLI, and OpenCode session ids as generation metadata, not as public relay session identity.
-   - Exposes a relay-owned host registry and command queue. The relay records host heartbeats, command eligibility, claims, terminal results, and stale-result rejection; local daemons execute the allowlisted commands.
+   - Treats native agent CLI session ids as generation metadata, not as public relay session identity.
+   - Exposes a relay-owned host registry and command queue. Multiple daemon hosts can register against the same relay; the relay records host heartbeats, command eligibility, claims, terminal results, and stale-result rejection. Local daemons execute the allowlisted commands.
 
 4. Third-party transports
    - Telegram supports relay-owned outbound messages, relay-owned `getUpdates` polling or `/api/telegram/events` webhooks, inline CLI/project/session buttons, and approval buttons.
@@ -90,16 +91,16 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - In existing-session mode, adds `--continue` or `--resume <id>` so remote turns land in persisted Claude Code history.
    - Lists persisted project sessions from Claude Code's local JSONL history and restarts the stream-json process when a different session is selected.
    - Uses `scripts/claude-permission-mcp-server.mjs` as a permission prompt tool.
-   - Sends phone messages into Claude Code stdin.
+   - Sends remote messages into Claude Code stdin.
 
 7. Gemini agent
    - Canonical config key: `gemini`.
    - CLI backend: `stream-json`.
    - MCP role: supplemental capability tools.
-   - Starts one Gemini CLI headless turn per phone message.
+   - Starts one Gemini CLI headless turn per remote message.
    - In existing-session mode, adds `--resume latest` or `--resume <id>` so remote turns land in persisted Gemini CLI history.
    - Lists sessions through `gemini --list-sessions` and stores the selected resume target for following headless turns.
-   - Passes phone text through `--prompt` by default.
+   - Passes remote text through `--prompt` by default.
    - Mirrors tool events as status updates.
    - Sets `GEMINI_CLI_TRUST_WORKSPACE=true` when `trustWorkspace: true` is configured, which is required for daemon/headless use in untrusted directories.
    - Permission behavior is currently controlled by Gemini CLI approval mode.
@@ -108,19 +109,20 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Canonical config key: `opencode`.
    - CLI backend: `server-http`.
    - Connects to OpenCode's headless HTTP server at `opencode.serverUrl`, or starts `opencode serve` when `serverMode: connect-or-start`.
-   - Lists OpenCode sessions through `GET /session`, reads selected-session history through `GET /session/:id/message`, and sends phone text through `POST /session/:id/message`.
+   - Lists OpenCode sessions through `GET /session`, reads selected-session history through `GET /session/:id/message`, and sends remote text through `POST /session/:id/message`.
    - Uses OpenCode Basic Auth when `serverPassword` is configured. The username defaults to `opencode`.
    - OpenCode-native permission callback bridging is not implemented yet.
 
 9. Unified daemon
    - `scripts/legax-daemon.mjs`
    - Reads the same YAML config and supervises all enabled CLI adapters.
-   - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
+   - Keeps concurrent supported agent CLI work in one relay session.
+   - Supports multi-host operation: several daemon instances can connect to one relay, publish their enabled adapters, and participate in relay-owned session routing, leases, handoffs, and checkpoints.
    - Polls relay `/api/messages` while running; relay-owned Telegram and Feishu/Lark inbound actions enter through the same message queue, so remote menus and on-demand launches do not depend on any specific adapter being alive.
    - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and executes only non-shell built-ins: relay health/status commands plus the restricted LPS TDD action set. Workspace-mutating LPS actions require an active portable-session lease, and `pr.create` is not advertised unless explicitly enabled.
    - Uses relay sessions and generations as the portable identity layer; `runtimeStatePath` may cache local cursors and selected native sessions, but relay state is authoritative for portable sessions, lease ownership, handoff audit, and fork lineage.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
-   - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
+   - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or remote actions target them.
    - Writes adapter-specific MCP config before launching Claude Code or Gemini CLI when `mcpAutoConfigure` is enabled.
    - Preserves launch-triggering control messages, so selecting an adapter that is not running still returns its project/chat or session list after startup.
 
@@ -128,7 +130,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - `scripts/lib/runtime-state.mjs`
    - Persists adapter cursors, dynamic modes, Telegram selections, selected Codex thread metadata, and per-agent inbound queues under `runtimeStatePath`.
    - Remains local daemon/adapter coordination state. It is not the source of truth for portable relay-owned sessions.
-   - Prevents old phone messages from replaying after restart.
+   - Prevents old remote messages from replaying after restart.
    - Uses a retrying atomic rename to tolerate concurrent adapter writes on Windows.
 
 ## Data Flow

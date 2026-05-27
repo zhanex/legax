@@ -2,7 +2,7 @@
 
 [English](ADAPTER_CONFORMANCE.md) | 简体中文
 
-这份清单定义每个 Legax 编码 Agent adapter 应满足的行为。它面向想要添加、审查或维护 adapter，同时不削弱共享远程控制模型的贡献者。
+这份清单定义每个 Legax 编码 Agent adapter 应满足的行为。它面向想要添加、审查或维护 adapter，同时不削弱共享远端交互模型的贡献者。
 
 实现指南见[扩展 Legax](EXTENDING.zh-CN.md)。三平面架构见[架构](ARCHITECTURE.zh-CN.md)。
 
@@ -15,7 +15,7 @@
 - MCP 暴露能力工具；它不启动或停止 adapter 进程。
 - 跨进程 adapter 协同状态归 `scripts/lib/runtime-state.mjs` 管理；可迁移的 relay session 状态归 `legax.relay/1` relay store 管理。
 - 当 CLI 提供原生结构化 callback 时，审批决策必须走该路径。
-- fallback PTY 或 TUI 控制必须视为高信任远程终端控制。
+- PTY 或 TUI 兜底控制必须视为高信任远程终端控制。
 
 ## 行为清单
 
@@ -82,5 +82,5 @@ LEGAX_REAL_CLIENTS=1 npm run test:e2e:real
 - 选中会话状态持久化在哪里？
 - 哪些模式接受或忽略手机文本和审批？
 - 如果权限请求 pending 时 adapter 重启，会发生什么？
-- 审批路径是原生路径，还是已记录的高信任 fallback？
+- 审批路径是原生路径，还是已经记录清楚的高信任兜底路径？
 - 哪条具体命令证明被修改的行为？
