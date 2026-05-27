@@ -8,6 +8,21 @@ async function pairBrowser(relay, { code = "482913", sessionId = relay.sessionId
   return pairRelayDevice(relay, { code, sessionId, label });
 }
 
+const REQUIRED_RELAY_STORE_DOMAINS = [
+  "sessions",
+  "generations",
+  "leases",
+  "hosts",
+  "devices",
+  "transports",
+  "inbox",
+  "commands",
+  "events",
+  "artifacts",
+  "workflowDefinitions",
+  "workflowRuns"
+];
+
 test("relay entrypoints delegate HTTP behavior to the shared relay core", async () => {
   const devEntry = await fs.readFile(new URL("../../scripts/simple-relay-server.mjs", import.meta.url), "utf8");
   const standaloneEntry = await fs.readFile(new URL("../../self-hosted-relay/server.mjs", import.meta.url), "utf8");
@@ -27,6 +42,117 @@ test("relay entrypoints delegate HTTP behavior to the shared relay core", async 
     const standaloneCopy = await fs.readFile(new URL(`../../self-hosted-relay/lib/${file}`, import.meta.url), "utf8");
     assert.equal(standaloneCopy, source, `${file} copied into self-hosted relay`);
   }
+});
+
+test("self-hosted relay initializes the formal relay store schema", async (t) => {
+  const relay = await startRelay(t, { sessionId: "schema-init-e2e" });
+  const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+
+  assert.equal(store.schema, "legax.relay/1");
+  assert.equal(store.version, 1);
+  for (const domain of REQUIRED_RELAY_STORE_DOMAINS) {
+    assert.ok(Object.hasOwn(store, domain), domain);
+  }
+  assert.equal(store.sessions[relay.sessionId].id, relay.sessionId);
+  assert.equal(store.sessions[relay.sessionId].status, "active");
+  assert.equal(store.sessions[relay.sessionId].currentGenerationId, "");
+  assert.deepEqual(store.sessions[relay.sessionId].nativeSessions, {});
+  assert.ok(Array.isArray(store.sessions[relay.sessionId].events));
+  assert.ok(Array.isArray(store.sessions[relay.sessionId].messages));
+  assert.ok(Array.isArray(store.events));
+});
+
+test("self-hosted relay migrates legacy relay store version 1 files", async (t) => {
+  const relay = await startRelay(t, { sessionId: "legacy-store-e2e" });
+  await fs.writeFile(relay.storePath, `${JSON.stringify({
+    version: 1,
+    sessions: {
+      "legacy-store-e2e": {
+        events: [{ id: "legacy-event", seq: 1, kind: "status", text: "legacy" }],
+        messages: [],
+        nextEventSeq: 2,
+        nextMessageSeq: 1
+      }
+    }
+  }, null, 2)}\n`, "utf8");
+
+  await fetchJson(`${relay.baseUrl}/api/events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    body: JSON.stringify({ sessionId: relay.sessionId, kind: "status", text: "after migration" }),
+    skipRelayCookie: true
+  });
+
+  const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.equal(store.schema, "legax.relay/1");
+  assert.equal(store.sessions[relay.sessionId].id, relay.sessionId);
+  assert.equal(store.sessions[relay.sessionId].events[0].text, "legacy");
+  assert.equal(store.sessions[relay.sessionId].events[1].seq, 2);
+  assert.equal(store.events[store.events.length - 1].kind, "session.event.appended");
+  assert.equal(store.events[store.events.length - 1].sessionId, relay.sessionId);
+  assert.deepEqual(Object.keys(store.generations), []);
+});
+
+test("self-hosted relay rejects unsupported or corrupted relay stores clearly", async (t) => {
+  const relay = await startRelay(t, { sessionId: "bad-store-e2e" });
+
+  await fs.writeFile(relay.storePath, `${JSON.stringify({ schema: "legax.relay/0", sessions: {} }, null, 2)}\n`, "utf8");
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/events`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      body: JSON.stringify({ sessionId: relay.sessionId, kind: "status", text: "wrong schema" }),
+      skipRelayCookie: true
+    }),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.body.error, /unsupported relay store schema "legax\.relay\/0"/);
+      return true;
+    }
+  );
+
+  await fs.writeFile(relay.storePath, `${JSON.stringify({ schema: "legax.relay/1", version: 1, sessions: [] }, null, 2)}\n`, "utf8");
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/events`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      body: JSON.stringify({ sessionId: relay.sessionId, kind: "status", text: "bad sessions domain" }),
+      skipRelayCookie: true
+    }),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.body.error, /invalid relay store domain "sessions"/);
+      return true;
+    }
+  );
+
+  await fs.writeFile(relay.storePath, "{ broken json", "utf8");
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/events`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      body: JSON.stringify({ sessionId: relay.sessionId, kind: "status", text: "corrupt store" }),
+      skipRelayCookie: true
+    }),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.body.error, /invalid relay store JSON/);
+      assert.match(error.body.error, /relay-e2e-/);
+      return true;
+    }
+  );
 });
 
 test("self-hosted relay supports authenticated desktop and phone flows", async (t) => {

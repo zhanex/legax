@@ -59,6 +59,8 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 提供桌面端 API、手机端 API 和手机网页。
    - 按 `targetAgentId` 路由手机入站消息。
    - 将 relay 状态保存到 `relay.storePath`；开发用 relay 默认是 `./data/relay-store.json`，独立部署 relay 默认是 `/var/lib/legax-relay/relay-store.json`。
+   - 使用第一个正式 relay store schema：`legax.relay/1`。这不是 “V2” 格式；Legax 还没有发布稳定 V1。
+   - 拥有可迁移的 relay session 状态，包括 sessions、generations、leases、hosts、devices、transports、inbox、commands、metadata events、artifacts、workflow definitions/runs。参见 [Relay Store](RELAY_STORE.zh-CN.md)。
 
 4. 第三方通讯通道
    - Telegram 支持出站消息、入站轮询、inline CLI/project/session 按钮和审批按钮。
@@ -121,6 +123,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
 10. 运行时状态
    - `scripts/lib/runtime-state.mjs`
    - 在 `runtimeStatePath` 下持久化适配器游标、动态模式、Telegram 选择、选中的 Codex thread 元数据和每个 Agent 的入站队列。
+   - 只作为 daemon/adapter 的本地协同状态，不是可迁移 relay session 的事实来源。
    - 重启后不会重放旧手机消息。
    - 使用带重试的原子 rename，以兼容 Windows 上多个适配器并发写入。
 

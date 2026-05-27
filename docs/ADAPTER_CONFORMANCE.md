@@ -13,7 +13,7 @@ Every adapter must keep these boundaries intact:
 - The daemon owns lifecycle supervision, inbound routing, and on-demand launches.
 - The adapter owns one CLI runtime and its session model.
 - MCP exposes capabilities; it does not start or stop adapter processes.
-- Cross-process state belongs in `scripts/lib/runtime-state.mjs`.
+- Cross-process adapter coordination belongs in `scripts/lib/runtime-state.mjs`; portable relay-owned session state belongs in the `legax.relay/1` relay store.
 - Approval decisions must flow through native structured callbacks when available.
 - Fallback PTY or TUI control must be treated as high-trust remote terminal control.
 

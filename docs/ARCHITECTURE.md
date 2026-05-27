@@ -59,6 +59,8 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Provides desktop APIs, phone APIs, and a phone web page.
    - Routes inbound phone messages by `targetAgentId`.
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.
+   - Uses the first formal relay store schema, `legax.relay/1`. This is not a "V2" format; Legax has not shipped a stable V1 release.
+   - Owns portable relay session state, including sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
 
 4. Third-party transports
    - Telegram supports outbound messages, inbound polling, inline CLI/project/session buttons, and approval buttons.
@@ -121,6 +123,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
 10. Runtime state
    - `scripts/lib/runtime-state.mjs`
    - Persists adapter cursors, dynamic modes, Telegram selections, selected Codex thread metadata, and per-agent inbound queues under `runtimeStatePath`.
+   - Remains local daemon/adapter coordination state. It is not the source of truth for portable relay-owned sessions.
    - Prevents old phone messages from replaying after restart.
    - Uses a retrying atomic rename to tolerate concurrent adapter writes on Windows.
 
