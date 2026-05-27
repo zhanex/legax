@@ -117,7 +117,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 读取同一份 YAML 配置并看护所有启用的 CLI 适配器。
    - 让并发 Codex、Claude、Gemini 和 OpenCode 工作共享同一个 relay session。
    - daemon 运行时轮询 relay `/api/messages`；relay 拥有的 Telegram 与飞书/Lark 入站动作都进入同一条消息队列，因此远端菜单和按需启动不依赖某个具体 adapter 已经存活。
-   - daemon 会把自己注册为 relay host，携带版本、平台、已启用 adapter 元数据、host groups 和支持的 command refs。它轮询 relay command queue，目前只执行不触发 shell 的内置动作，例如 `legax.ping`、`agent.list` 和 `legax.daemon.status`。
+   - daemon 会把自己注册为 relay host，携带版本、平台、已启用 adapter 元数据、host groups 和支持的 command refs。它轮询 relay command queue，只执行不触发 shell 的内置动作：relay 健康/状态命令和受限 LPS TDD action set。会修改 workspace 的 LPS action 必须持有有效 portable-session lease；`pr.create` 只有显式启用后才会对外声明。
    - 使用 relay sessions 和 generations 作为可迁移身份层；`runtimeStatePath` 可以缓存本地游标和已选原生 session，但 portable sessions、lease 归属、handoff 审计和 fork lineage 的权威状态在 relay。
    - 除非设置 `daemon.restart: false`，否则适配器崩溃后会按有限退避重启。
    - 监听运行时启动请求，并在第三方通道或手机操作指向某个 `autoStart: false` 适配器时按需启动它。

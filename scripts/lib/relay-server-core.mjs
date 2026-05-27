@@ -12,6 +12,14 @@ import {
   telegramUpdateId
 } from "./telegram-transport.mjs";
 import { sendTelegramEvent } from "./outbound-transports.mjs";
+import {
+  LPS_ACTION_IDS,
+  LPS_TDD_WORKFLOW_ID,
+  lpsActionById,
+  lpsActionContracts,
+  lpsDefaultWorkflowDefinition,
+  validateLpsActionResult
+} from "./lps-actions.mjs";
 
 function optionValue(args, name, fallback = "") {
   const prefix = `${name}=`;
@@ -70,19 +78,7 @@ const WORKFLOW_BUILTIN_ACTIONS = new Set([
   "legax.ping",
   "agent.list",
   "legax.daemon.status",
-  "requirements.capture",
-  "design.basic",
-  "design.detail",
-  "test.spec",
-  "tdd.red",
-  "tdd.review_red",
-  "tdd.green",
-  "tdd.review_green",
-  "tdd.refactor",
-  "workflow.run_check",
-  "review.self",
-  "pr.prepare",
-  "pr.create"
+  ...LPS_ACTION_IDS
 ]);
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
@@ -1651,8 +1647,12 @@ function normalizedWorkflowStep(step) {
   const id = relayId(step.id, "workflow step id");
   const uses = relayId(step.uses, "workflow step uses");
   if (!WORKFLOW_BUILTIN_ACTIONS.has(uses)) throw relayHttpError(400, `unknown workflow action ${uses}`);
+  const action = lpsActionById(uses);
   const retry = portableRecord(step.retry);
   const gate = portableRecord(step.gate);
+  if (action?.policy?.requiresGate && gate.before !== true) {
+    throw relayHttpError(400, `workflow action ${uses} requires a before gate`);
+  }
   return {
     id,
     uses,
@@ -1704,6 +1704,7 @@ function normalizeWorkflowDefinition(body) {
   const schema = relayString(body.schema ?? body.$schema, "", 80);
   if (schema !== WORKFLOW_SCHEMA) throw relayHttpError(400, `workflow schema must be ${WORKFLOW_SCHEMA}`);
   const id = relayId(body.id, "workflow definition id");
+  if (id === LPS_TDD_WORKFLOW_ID) throw relayHttpError(409, "built-in workflow definition id is reserved");
   const steps = Array.isArray(body.steps) ? body.steps.map(normalizedWorkflowStep) : [];
   if (steps.length === 0) throw relayHttpError(400, "workflow requires at least one step");
   assertWorkflowDag(steps);
@@ -1718,6 +1719,19 @@ function normalizeWorkflowDefinition(body) {
     createdAt: now,
     updatedAt: now
   };
+}
+
+function builtInWorkflowDefinition(definitionId) {
+  if (definitionId === LPS_TDD_WORKFLOW_ID) return lpsDefaultWorkflowDefinition();
+  return null;
+}
+
+function getWorkflowDefinition(store, definitionId) {
+  return store.workflowDefinitions[definitionId] ?? builtInWorkflowDefinition(definitionId);
+}
+
+function workflowDefinitionRequiresLease(definition) {
+  return definition.steps.some((step) => lpsActionById(step.uses)?.requiresLease === true);
 }
 
 function registerWorkflowDefinition(store, body) {
@@ -1768,8 +1782,17 @@ function workflowStepRuntime(step) {
 
 function createWorkflowRun(store, body) {
   const definitionId = relayId(body.definitionId, "definitionId");
-  const definition = store.workflowDefinitions[definitionId];
+  const definition = getWorkflowDefinition(store, definitionId);
   if (!definition) throw relayHttpError(404, "workflow definition not found");
+  let lease = null;
+  if (workflowDefinitionRequiresLease(definition)) {
+    if (!body.generationId) throw relayHttpError(409, "workflow contains lease-bound actions but generationId is missing");
+    lease = requireCurrentLease(store, relayId(body.generationId, "generationId"), {
+      hostId: body.leaseHostId ?? body.targetHostId,
+      fencingToken: body.fencingToken,
+      leaseToken: body.leaseToken
+    });
+  }
   const runId = workflowRunIdFromBody(body);
   if (store.workflowRuns[runId]) throw relayHttpError(409, "workflow run already exists");
   const now = new Date().toISOString();
@@ -1783,6 +1806,10 @@ function createWorkflowRun(store, body) {
     generationId: relayString(body.generationId, "", 160),
     targetHostId: relayId(body.targetHostId, "targetHostId", { required: false }),
     targetGroup: relayId(body.targetGroup, "targetGroup", { required: false }),
+    leaseHostId: lease?.hostId ?? "",
+    leaseId: lease?.id ?? "",
+    leaseToken: lease?.token ?? "",
+    fencingToken: lease?.fencingToken ?? "",
     state: "pending",
     inputs: {
       ...workflowInputDefaults(definition),
@@ -1806,7 +1833,7 @@ function createWorkflowRun(store, body) {
 }
 
 function workflowDefinitionForRun(store, run) {
-  const definition = store.workflowDefinitions[run.definitionId];
+  const definition = getWorkflowDefinition(store, run.definitionId);
   if (!definition) throw relayHttpError(409, "workflow definition missing for run");
   return definition;
 }
@@ -1856,18 +1883,50 @@ function ensureWorkflowGate(store, run, stepDefinition) {
 function dispatchWorkflowStep(store, run, step, stepDefinition) {
   const nowMs = Date.now();
   const attempt = Number(step.attempts ?? 0) + 1;
+  const action = lpsActionById(step.commandRef);
+  if (action?.requiresLease) {
+    try {
+      requireCurrentLease(store, run.generationId, {
+        hostId: run.leaseHostId || run.targetHostId,
+        fencingToken: run.fencingToken,
+        leaseToken: run.leaseToken
+      });
+    } catch (error) {
+      const now = isoFromMs(nowMs);
+      step.state = "conflicted";
+      step.error = { code: "lease_required", message: error.message };
+      step.completedAt = now;
+      step.updatedAt = now;
+      run.updatedAt = now;
+      return;
+    }
+  }
   const { command } = createRelayCommand(store, {
     sessionId: run.sessionId,
     commandRef: step.commandRef,
     targetHostId: run.targetHostId,
     targetGroup: run.targetGroup,
     generationId: run.generationId,
+    leaseToken: action?.requiresLease ? run.leaseToken : "",
     idempotencyKey: `workflow:${run.id}:${step.id}:${attempt}`,
     payload: {
       workflowRunId: run.id,
       workflowDefinitionId: run.definitionId,
       stepId: step.id,
       inputs: run.inputs,
+      action: action ? {
+        id: action.id,
+        mutatesWorkspace: action.mutatesWorkspace === true,
+        requiresLease: action.requiresLease === true
+      } : null,
+      dependencies: Object.fromEntries(step.needs.map((dependencyId) => {
+        const dependency = run.steps[dependencyId];
+        return [dependencyId, {
+          state: dependency?.state ?? "",
+          result: dependency?.result ?? null,
+          evidence: dependency?.evidence ?? null
+        }];
+      })),
       artifacts: stepDefinition.artifacts,
       evidence: stepDefinition.evidence
     },
@@ -2014,6 +2073,11 @@ function recordWorkflowStepResult(store, runId, stepId, body) {
   }
   if (step.state !== "running") throw relayHttpError(409, `workflow step is ${step.state}`);
   if (step.commandId !== commandId) throw relayHttpError(409, "stale workflow step command");
+  try {
+    validateLpsActionResult(step.commandRef, state, body);
+  } catch (error) {
+    throw relayHttpError(400, error.message);
+  }
   const now = new Date().toISOString();
   finishWorkflowStepCommand(store, step, state, body);
   if (state === "succeeded") {
@@ -2042,6 +2106,21 @@ function recordWorkflowStepResult(store, runId, stepId, body) {
     state: step.state
   });
   return { run, idempotent: false };
+}
+
+function recordWorkflowStepResultFromCommand(store, command) {
+  const workflowRunId = command?.payload?.workflowRunId;
+  const stepId = command?.payload?.stepId;
+  if (!workflowRunId || !stepId) return null;
+  if (!store.workflowRuns[workflowRunId]) return null;
+  const result = isRecord(command.result) ? command.result : {};
+  return recordWorkflowStepResult(store, workflowRunId, stepId, {
+    commandId: command.id,
+    state: command.state,
+    result,
+    evidence: isRecord(result.evidence) ? result.evidence : null,
+    error: command.error
+  }).run;
 }
 
 function decideWorkflowGate(store, runId, stepId, body) {
@@ -5712,6 +5791,15 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/workflow-actions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, actions: lpsActionContracts() });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/workflow-definitions") {
     if (!requireDesktop(req, url)) {
       sendJson(res, 401, { ok: false, error: "unauthorized" });
@@ -5733,7 +5821,7 @@ async function route(req, res) {
     }
     const definitionId = decodeURIComponent(workflowDefinitionRoute[1]);
     const store = loadStore();
-    const definition = store.workflowDefinitions[definitionId];
+    const definition = getWorkflowDefinition(store, definitionId);
     if (!definition) {
       sendJson(res, 404, { ok: false, error: "workflow definition not found" });
       return;
@@ -5913,8 +6001,9 @@ async function route(req, res) {
     const body = await readJsonBody(req);
     const store = loadStore();
     const { command, idempotent } = completeRelayCommand(store, decodeURIComponent(commandRoute[1]), body);
+    const workflowRun = idempotent ? null : recordWorkflowStepResultFromCommand(store, command);
     saveStore(store);
-    sendJson(res, 200, { ok: true, command, idempotent });
+    sendJson(res, 200, { ok: true, command, workflowRun, idempotent });
     return;
   }
 

@@ -122,6 +122,24 @@ Desktop-authenticated workflow APIs:
 
 The relay never executes workflow actions directly. A ready step creates a relay command with the step's `uses` value as `commandRef`; daemon hosts can claim it only if the command ref is present in their local allowlist. Gate waits are stored as transport-neutral `workflow_gate` inbox items and can be resumed through the gate endpoint.
 
+Built-in LPS TDD action contracts are available through `GET /api/workflow-actions`. Each contract declares required inputs, required outputs, required evidence, whether the action may mutate the workspace, and any policy gates. The initial action set is:
+
+- `requirements.capture`
+- `design.basic`
+- `design.detail`
+- `test.spec`
+- `tdd.red`
+- `tdd.review_red`
+- `tdd.green`
+- `tdd.review_green`
+- `tdd.refactor`
+- `workflow.run_check`
+- `review.self`
+- `pr.prepare`
+- `pr.create`
+
+The built-in workflow definition `lps-tdd` runs from requirements capture through `pr.prepare`. It intentionally excludes `pr.create`; PR creation is disabled by default, must be behind a before-gate when used, and is draft-first even when enabled. Workspace-mutating actions (`tdd.red`, `tdd.green`, and `tdd.refactor`) require a valid generation lease. `workflow.run_check` accepts an approved `checkRef` and never accepts a free-form command string from the workflow definition.
+
 ## Worktree-Lite
 
 `legax worktree` exposes a small, local-only workflow:

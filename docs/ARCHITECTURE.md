@@ -117,7 +117,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Reads the same YAML config and supervises all enabled CLI adapters.
    - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
    - Polls relay `/api/messages` while running; relay-owned Telegram and Feishu/Lark inbound actions enter through the same message queue, so remote menus and on-demand launches do not depend on any specific adapter being alive.
-   - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and currently executes only non-shell built-ins such as `legax.ping`, `agent.list`, and `legax.daemon.status`.
+   - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and executes only non-shell built-ins: relay health/status commands plus the restricted LPS TDD action set. Workspace-mutating LPS actions require an active portable-session lease, and `pr.create` is not advertised unless explicitly enabled.
    - Uses relay sessions and generations as the portable identity layer; `runtimeStatePath` may cache local cursors and selected native sessions, but relay state is authoritative for portable sessions, lease ownership, handoff audit, and fork lineage.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
    - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
