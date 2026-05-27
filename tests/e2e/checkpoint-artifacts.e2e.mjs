@@ -90,7 +90,7 @@ test("checkpoint artifacts encrypt safe bundles and restore without plaintext re
   assert.deepEqual(restoredBundle.files.map((file) => file.path).sort(), ["src/app.txt", "src/new.txt"]);
 
   const tamperedCiphertext = structuredClone(artifact);
-  tamperedCiphertext.ciphertext.ciphertext = `${tamperedCiphertext.ciphertext.ciphertext.slice(0, -1)}${tamperedCiphertext.ciphertext.ciphertext.endsWith("A") ? "B" : "A"}`;
+  tamperedCiphertext.ciphertext.ciphertext = `${tamperedCiphertext.ciphertext.ciphertext.startsWith("A") ? "B" : "A"}${tamperedCiphertext.ciphertext.ciphertext.slice(1)}`;
   assert.throws(() => decryptCheckpointArtifact(tamperedCiphertext, { privateKey: recipient.privateKey }), /decrypt|authenticate|Unsupported state/i);
 
   const tamperedMetadata = structuredClone(artifact);

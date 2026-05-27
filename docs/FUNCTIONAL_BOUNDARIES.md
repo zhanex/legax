@@ -50,6 +50,13 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 - `POST /api/handoffs/:id/transition`
 - `POST /api/artifacts`
 - `GET /api/artifacts/:id`
+- `POST /api/workflow-definitions`
+- `GET /api/workflow-definitions/:id`
+- `POST /api/workflow-runs`
+- `GET /api/workflow-runs/:id`
+- `POST /api/workflow-runs/:id/steps/:stepId/result`
+- `POST /api/workflow-runs/:id/gates/:stepId`
+- `POST /api/workflow-runs/:id/cancel`
 - `POST /api/hosts`
 - `GET /api/hosts`
 - `POST /api/commands`

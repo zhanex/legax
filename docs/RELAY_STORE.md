@@ -52,8 +52,8 @@ Required formal domains:
 | `commands` | Relay-owned command records created by phone, Telegram, Feishu/Lark, workflow actions, or desktop tools and executed only by eligible daemon hosts. |
 | `events` | Relay metadata event stream for append/update paths. This is separate from per-session agent-visible event queues. |
 | `artifacts` | Encrypted checkpoint artifact records generated or referenced by handoffs, forks, and workflows. |
-| `workflowDefinitions` | Future relay-side workflow definitions. |
-| `workflowRuns` | Future relay-side workflow run state. |
+| `workflowDefinitions` | Restricted `legax.workflow/1` workflow definitions validated by the relay. |
+| `workflowRuns` | Relay-owned workflow run, step, retry, timeout, and gate state. |
 
 Compatibility domains retained by current APIs:
 
@@ -229,6 +229,61 @@ Checkpoint artifacts are encrypted before upload. The relay stores ciphertext an
 ```
 
 `POST /api/artifacts` rejects plaintext fields such as `plaintext`, `bundle`, `payload`, `files`, or `content`. `GET /api/artifacts/:id` returns the encrypted record so an authorized daemon can unwrap the data key locally and restore the checkpoint after validating paths and hashes.
+
+## Workflow Definition And Run Records
+
+Workflow definitions are stored only after schema validation:
+
+```json
+{
+  "id": "lps-tdd",
+  "schema": "legax.workflow/1",
+  "version": "1.0.0",
+  "metadata": { "title": "Documented TDD" },
+  "inputs": { "issue": { "type": "number", "default": 0 } },
+  "steps": [
+    {
+      "id": "requirements",
+      "uses": "requirements.capture",
+      "needs": [],
+      "gate": null,
+      "retry": { "maxAttempts": 1 },
+      "timeoutMs": 30000,
+      "artifacts": {},
+      "evidence": {}
+    }
+  ],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+Definitions reject forbidden executable fields, duplicate step ids, unknown built-in actions, missing dependencies, and cycles. A run expands a definition into step state:
+
+```json
+{
+  "id": "wfrun_abc123",
+  "definitionId": "lps-tdd",
+  "schema": "legax.workflow/1",
+  "sessionId": "default",
+  "state": "running",
+  "inputs": { "issue": 27 },
+  "steps": {
+    "requirements": {
+      "id": "requirements",
+      "commandRef": "requirements.capture",
+      "state": "running",
+      "attempts": 1,
+      "maxAttempts": 1,
+      "commandId": "cmd_abc123",
+      "timeoutAt": "2026-05-26T00:00:30.000Z"
+    }
+  },
+  "gates": {}
+}
+```
+
+Ready steps create relay command records whose `commandRef` is copied from `uses`; daemons still need a matching local command allowlist before they can claim the command. Gate waits are recorded in `gates` and also as `workflow_gate` records under `inbox` so transports can surface a neutral approval item.
 
 ## Host Records
 
