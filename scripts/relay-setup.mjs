@@ -36,6 +36,34 @@ function posixPath(value) {
   return String(value).replaceAll("\\", "/");
 }
 
+function writeTextFileAtomically(filePath, body, { mode = 0o600 } = {}) {
+  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`);
+  let completed = false;
+  try {
+    fs.writeFileSync(tempPath, body, { encoding: "utf8", flag: "wx", mode });
+    fs.renameSync(tempPath, filePath);
+    completed = true;
+  } finally {
+    if (!completed) {
+      try { fs.rmSync(tempPath, { force: true }); } catch {}
+    }
+  }
+}
+
+function writeNewTextFile(filePath, body, { mode = 0o600 } = {}) {
+  fs.writeFileSync(filePath, body, { encoding: "utf8", flag: "wx", mode });
+}
+
+function writeRelayInitFile(filePath, body, { force, label, mode }) {
+  try {
+    if (force) writeTextFileAtomically(filePath, body, { mode });
+    else writeNewTextFile(filePath, body, { mode });
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error(`${label} already exists: ${filePath}`);
+    throw error;
+  }
+}
+
 export function relayInit(args, env = process.env) {
   const configPath = optionValue(args, "--config")
     ? resolveConfigPath(optionValue(args, "--config"), env)
@@ -53,12 +81,7 @@ export function relayInit(args, env = process.env) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`invalid relay port: ${optionValue(args, "--port", "8787")}`);
   }
-  if (fs.existsSync(configPath) && !hasOption(args, "--force")) {
-    throw new Error(`relay config already exists: ${configPath}`);
-  }
-  if (fs.existsSync(caddyfilePath) && !hasOption(args, "--force")) {
-    throw new Error(`Caddyfile already exists: ${caddyfilePath}`);
-  }
+  const force = hasOption(args, "--force");
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(caddyfilePath), { recursive: true });
@@ -78,13 +101,24 @@ relay:
     maxTail: 1000
     textPreview: 80
 `;
-  fs.writeFileSync(configPath, yaml, "utf8");
 
   const caddyfile = `${domain} {
   reverse_proxy ${host}:${port}
 }
 `;
-  fs.writeFileSync(caddyfilePath, caddyfile, "utf8");
+  const created = [];
+  try {
+    writeRelayInitFile(configPath, yaml, { force, label: "relay config", mode: 0o600 });
+    if (!force) created.push(configPath);
+    writeRelayInitFile(caddyfilePath, caddyfile, { force, label: "Caddyfile", mode: 0o644 });
+  } catch (error) {
+    if (!force) {
+      for (const filePath of created) {
+        try { fs.rmSync(filePath, { force: true }); } catch {}
+      }
+    }
+    throw error;
+  }
 
   const daemonSnippet = `relay:
   publicBaseUrl: ${publicBaseUrl}

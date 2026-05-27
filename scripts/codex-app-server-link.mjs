@@ -1537,8 +1537,8 @@ function threadsReplyMarkup(agentId, threads, { projectRef, pagination } = {}) {
 }
 
 function sessionReplyMarkup(agentId, threadId) {
-  const callbackData = `legax:session:${encodeURIComponent(agentId)}:${encodeURIComponent(threadId)}`;
   const encodedAgent = encodeURIComponent(agentId);
+  const callbackData = `legax:session:${encodedAgent}:${encodeURIComponent(threadId)}`;
   return {
     inline_keyboard: [
       [{ text: "Get messages", callback_data: callbackData.length <= 64 ? callbackData : `legax:codex:use:${threadId}` }],

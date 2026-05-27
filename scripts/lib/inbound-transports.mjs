@@ -10,11 +10,13 @@ import {
   setAgentTransportCursor,
   setTransportSelection
 } from "./runtime-state.mjs";
+import { telegramApiUrl } from "./telegram-transport.mjs";
 
 async function httpJson(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // codeql[js/file-access-to-http] Operator-owned Telegram config intentionally supplies the polling endpoint and bot credential.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
@@ -41,11 +43,6 @@ async function httpJson(url, options = {}, timeoutMs = 15000) {
 
 function transportKey(transport) {
   return `${transport.type}:${transport.name ?? "telegram"}`;
-}
-
-function telegramApiUrl(transport, token, method) {
-  const baseUrl = String(transport.apiBaseUrl ?? "https://api.telegram.org/bot").replace(/\/+$/, "");
-  return `${baseUrl}${token}/${method}`;
 }
 
 function defaultTarget(config, transport, agent) {

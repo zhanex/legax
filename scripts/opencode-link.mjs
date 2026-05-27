@@ -41,6 +41,26 @@ function resolveFromCwd(value) {
   return resolveConfigRelative(value, activeConfigPath);
 }
 
+function isLoopbackHostname(hostname) {
+  const value = String(hostname ?? "").toLowerCase().replace(/^\[|\]$/g, "");
+  return value === "localhost"
+    || value === "::1"
+    || value === "0:0:0:0:0:0:0:1"
+    || /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function safeOpenCodeServerUrl(value, { allowRemoteServer = false } = {}) {
+  const parsed = new URL(String(value || "http://127.0.0.1:4096"));
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("opencode.serverUrl must use HTTPS or loopback HTTP.");
+  }
+  const loopback = isLoopbackHostname(parsed.hostname);
+  if (parsed.protocol === "http:" && !loopback && !allowRemoteServer) {
+    throw new Error("opencode.serverUrl must use HTTPS or loopback HTTP unless opencode.allowRemoteServer is true.");
+  }
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 function loadConfig() {
   const configPath = resolveConfigPath();
   activeConfigPath = configPath;
@@ -54,6 +74,7 @@ function loadConfig() {
   };
   const approvals = normalizeApprovals(raw.approvals);
   const opencodeRaw = raw.opencode ?? {};
+  const allowRemoteServer = opencodeRaw.allowRemoteServer ?? false;
   const opencode = {
     enabled: opencodeRaw.enabled ?? true,
     autoStart: opencodeRaw.autoStart ?? false,
@@ -67,7 +88,8 @@ function loadConfig() {
     args: Array.isArray(opencodeRaw.args) ? opencodeRaw.args : [],
     serveArgs: Array.isArray(opencodeRaw.serveArgs) ? opencodeRaw.serveArgs : [],
     cwd: opencodeRaw.cwd ?? ".",
-    serverUrl: String(opencodeRaw.serverUrl ?? "http://127.0.0.1:4096").replace(/\/+$/, ""),
+    serverUrl: safeOpenCodeServerUrl(opencodeRaw.serverUrl ?? "http://127.0.0.1:4096", { allowRemoteServer }),
+    allowRemoteServer,
     serverMode: opencodeRaw.serverMode ?? "connect-or-start",
     serverUsername: opencodeRaw.serverUsername ?? "opencode",
     serverPassword: opencodeRaw.serverPassword ?? "",
@@ -116,6 +138,7 @@ async function httpJson(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // codeql[js/file-access-to-http] Operator-owned OpenCode/relay config intentionally supplies the endpoint and credentials.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,

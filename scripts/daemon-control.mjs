@@ -71,6 +71,24 @@ function relayBaseUrl(config) {
   return `http://${shownHost}:${port}`;
 }
 
+function isLoopbackHostname(hostname) {
+  const value = String(hostname ?? "").toLowerCase().replace(/^\[|\]$/g, "");
+  return value === "localhost"
+    || value === "::1"
+    || value === "0:0:0:0:0:0:0:1"
+    || /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function assertSafeRelayBaseUrl(baseUrl) {
+  const parsed = new URL(baseUrl);
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("relay baseUrl must use HTTPS or loopback HTTP.");
+  }
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+    throw new Error("relay baseUrl must use HTTPS or loopback HTTP.");
+  }
+}
+
 function relaySecret(config) {
   const transport = firstRelayTransport(config);
   return String(config.relay?.secret ?? transport?.secret ?? "");
@@ -93,6 +111,12 @@ async function pairBrowser() {
   const configPath = resolveConfigPath();
   const config = readYaml(configPath) ?? {};
   const baseUrl = relayBaseUrl(config);
+  try {
+    assertSafeRelayBaseUrl(baseUrl);
+  } catch (error) {
+    process.stderr.write(`[daemon-control] ${error.message}\n`);
+    process.exit(2);
+  }
   const secret = relaySecret(config);
   if (!secret) {
     process.stderr.write(`[daemon-control] relay.secret is empty in ${configPath}; cannot create a pairing code.\n`);
@@ -114,12 +138,15 @@ async function pairBrowser() {
 
   const sessionId = optionValue("--session") || String(config.sessionId ?? "default");
   const label = optionValue("--label") || "Browser";
+  // codeql[js/file-access-to-http] Pairing requests intentionally use the operator-configured relay URL and secret.
   const response = await fetch(`${baseUrl}/api/pairing-codes`, {
     method: "POST",
+    // codeql[js/file-access-to-http] The relay secret is read from operator-owned local config.
     headers: {
       "content-type": "application/json",
       "x-legax-secret": secret
     },
+    // codeql[js/file-access-to-http] Pairing metadata is explicit local CLI input sent to the validated relay URL.
     body: JSON.stringify({ code, expiresInMs, label, sessionId })
   });
   let responseBody = {};

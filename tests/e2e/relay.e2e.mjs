@@ -1473,6 +1473,22 @@ test("self-hosted relay issues TWA launch tokens and queues project picker reque
   assert.equal(bootstrap.sessionId, relay.sessionId);
   assert.equal(bootstrap.agentId, "codex-cli");
 
+  for (const invalid of ["../secrets", "/etc/passwd", "C:\\Users\\Admin", "\\\\server\\share", "safe/%2e%2e/secret"]) {
+    await assert.rejects(
+      fetchJson(`${relay.baseUrl}/api/twa/project-children`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        skipRelayCookie: true,
+        body: JSON.stringify({
+          token: launch.token,
+          rootId: "root-1",
+          relativePath: invalid
+        })
+      }),
+      { status: 400 }
+    );
+  }
+
   const listRequest = await fetchJson(`${relay.baseUrl}/api/twa/project-children`, {
     method: "POST",
     headers: { "content-type": "application/json" },

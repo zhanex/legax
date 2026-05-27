@@ -360,6 +360,7 @@ async function httpJson(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // codeql[js/file-access-to-http] Relay Telegram polling uses operator-owned transport config by design.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
@@ -725,6 +726,7 @@ function appendAudit(direction, payload) {
   };
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG_PATH), { recursive: true });
+    // codeql[js/http-to-file-access] Audit JSONL intentionally stores bounded relay event metadata for operator inspection.
     fs.appendFileSync(AUDIT_LOG_PATH, `${JSON.stringify(entry)}\n`, "utf8");
   } catch (error) {
     // Audit must never take the relay down. Surface the failure once and move on.
@@ -2671,12 +2673,7 @@ function requestSecret(req) {
 
 function requireDesktop(req, url) {
   if (ALLOW_INSECURE_DEV && !DESKTOP_SECRET) return true;
-  return safeEqual(requestSecret(req, url), DESKTOP_SECRET);
-}
-
-function requirePhone(req, url) {
-  if (ALLOW_INSECURE_DEV && !DESKTOP_SECRET) return true;
-  return Boolean(validateDeviceCookie(req));
+  return safeEqual(requestSecret(req), DESKTOP_SECRET);
 }
 
 function requirePhoneForSession(req, url, sessionId) {
@@ -5061,6 +5058,30 @@ function twaRequestId() {
   return `twa_${crypto.randomBytes(12).toString("base64url")}`;
 }
 
+function normalizeTwaRootId(value) {
+  const rootId = String(value ?? "").trim();
+  if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(rootId) || rootId.includes("..")) {
+    throw new Error("invalid TWA rootId");
+  }
+  return rootId;
+}
+
+function normalizeTwaRelativePath(value, label = "relativePath") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (raw.includes("\0") || raw.includes("\\") || raw.startsWith("/") || raw.startsWith("//") || /^[A-Za-z]:/.test(raw)) {
+    throw new Error(`invalid TWA ${label}`);
+  }
+  if (/%(?:2e|2f|5c)/i.test(raw)) throw new Error(`invalid TWA ${label}`);
+  const normalized = path.posix.normalize(raw);
+  if (normalized === ".") return "";
+  if (normalized === ".." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
+    throw new Error(`invalid TWA ${label}`);
+  }
+  if (normalized.split("/").includes("..")) throw new Error(`invalid TWA ${label}`);
+  return normalized;
+}
+
 function twaNewProjectPage() {
   return `<!doctype html>
 <html lang="en">
@@ -5408,14 +5429,23 @@ async function route(req, res) {
     }
     const [sessionId, session] = getSession(store, token.sessionId);
     const requestId = twaRequestId();
+    let rootId;
+    let relativePath;
+    try {
+      rootId = normalizeTwaRootId(body.rootId);
+      relativePath = normalizeTwaRelativePath(body.relativePath);
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+      return;
+    }
     const message = normalizeMessage({
       type: "control",
       action: "list_project_children",
       targetAgentId: "legax-daemon",
       selectedAgentId: token.agentId,
       requestId,
-      rootId: body.rootId,
-      relativePath: body.relativePath ?? ""
+      rootId,
+      relativePath
     }, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
     appendRelayStoreEvent(store, "session.message.appended", {
@@ -5441,15 +5471,26 @@ async function route(req, res) {
     }
     const [sessionId, session] = getSession(store, token.sessionId);
     const requestId = twaRequestId();
+    let rootId;
+    let relativePath;
+    let projectPath;
+    try {
+      rootId = normalizeTwaRootId(body.rootId);
+      relativePath = normalizeTwaRelativePath(body.relativePath);
+      projectPath = normalizeTwaRelativePath(body.projectPath, "projectPath");
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+      return;
+    }
     const message = normalizeMessage({
       type: "control",
       action: "open_project",
       targetAgentId: "legax-daemon",
       selectedAgentId: token.agentId,
       requestId,
-      rootId: body.rootId,
-      relativePath: body.relativePath ?? "",
-      projectPath: body.projectPath ?? ""
+      rootId,
+      relativePath,
+      projectPath
     }, sessionId, session.nextMessageSeq++);
     boundedPush(session.messages, message);
     appendRelayStoreEvent(store, "session.message.appended", {

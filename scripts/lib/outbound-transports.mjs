@@ -1,14 +1,18 @@
 import { hierarchyRows } from "./menu-groups.mjs";
+import { telegramApiUrl } from "./telegram-transport.mjs";
 
 async function httpJson(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // codeql[js/file-access-to-http] Operator-owned transport config intentionally supplies the remote endpoint and credentials.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
+      // codeql[js/file-access-to-http] Header fields are operator-configured transport metadata.
       headers: {
         ...(options.body ? { "content-type": "application/json" } : {}),
+        // codeql[js/file-access-to-http] Headers come from operator-owned transport configuration.
         ...(options.headers ?? {})
       }
     });
@@ -386,11 +390,6 @@ function escapeHtml(value) {
 
 function htmlCode(value) {
   return `<code>${escapeHtml(value)}</code>`;
-}
-
-function telegramApiUrl(transport, token, method) {
-  const baseUrl = String(transport.apiBaseUrl ?? "https://api.telegram.org/bot").replace(/\/+$/, "");
-  return `${baseUrl}${token}/${method}`;
 }
 
 function feishuApiBaseUrl(transport) {
@@ -1039,7 +1038,7 @@ async function sendViaTelegram(config, transport, event) {
   if (!chatId) throw new Error("Telegram transport missing chatId (set transports[].chatId inline in config.yaml).");
   const payloads = buildTelegramMessagePayloads(config, transport, event);
   if (payloads.length === 0) return { skipped: true, reason: "message_detail" };
-  let pinnedContext = { skipped: true, reason: "not_attempted" };
+  let pinnedContext;
   try {
     pinnedContext = await pinTelegramActiveContext(transport, token, telegramNotificationPolicy(config, transport, event), event);
   } catch (error) {
