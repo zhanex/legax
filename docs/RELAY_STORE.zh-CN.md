@@ -21,6 +21,7 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
   "sessions": {},
   "generations": {},
   "leases": {},
+  "handoffs": {},
   "hosts": {},
   "devices": {},
   "transports": {},
@@ -42,7 +43,8 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
 | --- | --- |
 | `sessions` | 按 relay `sessionId` 索引的稳定 relay sessions。当前记录仍保留 legacy event/message 队列，同时逐步引入可迁移 generation 模型。 |
 | `generations` | relay 拥有的 generation 记录。一个 generation 可以映射到 CLI 原生 session、turn 或 resume 目标，但这些原生 id 不是公开 relay id。 |
-| `leases` | 用于后续 workflow 和 host 归属扩展的协调租约记录。 |
+| `leases` | 当前执行归属记录，包含 host id、generation id、fencing token、lease token、过期时间、续租、释放和 reclaim 状态。 |
+| `handoffs` | 可审计的 handoff 记录，用于通过 checkpoint、upload、release、claim、restore、resume 等状态把执行从一个 host 转移到另一个 host。 |
 | `hosts` | daemon host 身份、能力、adapter、命令 allowlist、分组和心跳记录。 |
 | `devices` | 按 relay device id 索引的已配对浏览器设备，包含 token 哈希和撤销元数据。 |
 | `transports` | relay 可见的 transport 运行时状态，包括 Telegram offset、去重 id 和当前目标选择。 |
@@ -69,9 +71,16 @@ Session 记录按稳定 relay `sessionId` 索引，并规范化为包含：
 {
   "id": "default",
   "status": "active",
+  "title": "",
+  "selectedAgentId": "",
   "createdAt": "2026-05-26T00:00:00.000Z",
   "updatedAt": "2026-05-26T00:00:00.000Z",
   "currentGenerationId": "",
+  "generationIds": [],
+  "handoffFromGenerationId": "",
+  "forkedFromGenerationId": "",
+  "transportBindings": {},
+  "metadata": {},
   "nativeSessions": {},
   "events": [],
   "messages": [],
@@ -81,6 +90,99 @@ Session 记录按稳定 relay `sessionId` 索引，并规范化为包含：
 ```
 
 `events` 和 `messages` 是 `/api/events` 与 `/api/messages` 当前使用的 legacy 队列。它们会继续保留以维持兼容性。新的 workflow 编排应基于正式 relay 域构建，而不是把这些队列当作唯一 session 事实来源。
+
+## Generation 记录
+
+generation 是一个 portable relay session 下的一次执行尝试或分支：
+
+```json
+{
+  "id": "gen_abc123",
+  "sessionId": "default",
+  "baseGenerationId": "",
+  "hostId": "host-desktop-1",
+  "adapterId": "gemini-cli",
+  "agentId": "gemini-cli",
+  "nativeSession": {
+    "provider": "gemini",
+    "id": "native-cli-session"
+  },
+  "worktree": {
+    "path": "F:/workspace/project"
+  },
+  "checkpoint": {
+    "artifactId": "checkpoint-1"
+  },
+  "state": "created",
+  "result": null,
+  "error": null,
+  "leaseId": "",
+  "leaseIds": [],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+CLI 原生 id 只属于 `nativeSession`。它们不是稳定的 relay `sessionId`，也不应作为主要面向用户的身份。
+
+`POST /api/generations` 创建 generation，并把它设为 session 的 `currentGenerationId`。`POST /api/generations/:id/update` 可修改受 lease 保护的字段，例如 `state`、`checkpoint`、`worktree`、`nativeSession`、`result` 和 `error`；调用方必须携带当前 lease holder 的 `hostId`、`fencingToken` 和 `leaseToken`。
+
+## Lease 记录
+
+lease 用于隔离一个 generation 的当前执行归属：
+
+```json
+{
+  "id": "lease_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "hostId": "host-desktop-1",
+  "adapterId": "gemini-cli",
+  "state": "active",
+  "fencingToken": 1,
+  "token": "lease_secret_token",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z",
+  "renewedAt": "2026-05-26T00:00:00.000Z",
+  "expiresAt": "2026-05-26T00:00:30.000Z",
+  "releasedAt": "",
+  "expiredAt": "",
+  "reclaimedAt": ""
+}
+```
+
+lease 状态只能是 `active`、`released`、`expired` 或 `reclaimed`。
+
+- `POST /api/leases/claim` 在 generation 没有 active lease 时创建 active lease。
+- 过期 lease 只有在调用方显式传入 `reclaimExpired: true` 时才能被 reclaim；新的 lease 会得到更高的 `fencingToken`。
+- `POST /api/leases/:id/renew` 延长过期时间，并要求当前 `hostId`、`fencingToken` 和 `leaseToken`。
+- `POST /api/leases/:id/release` 把 active lease 变为 `released`，同样要求当前 `hostId`、`fencingToken` 和 `leaseToken`。
+- 过期 host id、过期 fencing token 和过期 lease token 都会返回 `409`，且不会修改 generation。
+
+## Fork 与 Handoff 记录
+
+`POST /api/generations/:id/fork` 创建一个子 generation，其 `baseGenerationId` 指向父 generation。父 generation 不会被修改；审计只追加到 relay metadata event stream。fork 要求当前 lease holder 的 `leaseHostId`、`fencingToken` 和 `leaseToken`。
+
+`POST /api/handoffs` 创建 handoff 记录：
+
+```json
+{
+  "id": "handoff_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "fromHostId": "host-a",
+  "toHostId": "host-b",
+  "state": "requested",
+  "transitions": [
+    { "state": "requested", "at": "2026-05-26T00:00:00.000Z" }
+  ],
+  "error": null,
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+`GET /api/handoffs/:id` 读取当前 handoff 记录。`POST /api/handoffs/:id/transition` 只接受文档化顺序：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。重复提交相同 transition 是幂等的，不会追加重复 event。每次新的 transition 都会追加 `handoff.<state>` metadata event，让 handoff 进度保持可审计。
 
 ## Host 记录
 

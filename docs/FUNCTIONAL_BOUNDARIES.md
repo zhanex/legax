@@ -25,7 +25,7 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 
 - `config.yaml`: local operator configuration. It is the source for relay URL, relay secret, Telegram bot token, Feishu/Lark app credentials, webhook URLs, and adapter settings.
 - `data/runtime-state.json`: daemon and adapter coordination state. It stores cursors, selected sessions, modes, inbox queues, and launch requests. It is local runtime coordination, not portable relay session truth.
-- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
+- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
 - `data/mcp-state.json`: generic MCP tool state.
 - CLI-native history: Codex, Claude Code, Gemini, and OpenCode own their own session history. Legax reads or resumes it through each CLI's supported interface.
 
@@ -35,6 +35,19 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 
 - `POST /api/events`
 - `GET /api/messages`
+- `POST /api/sessions`
+- `GET /api/sessions/:id`
+- `POST /api/generations`
+- `GET /api/generations/:id`
+- `POST /api/generations/:id/update`
+- `POST /api/generations/:id/fork`
+- `POST /api/leases/claim`
+- `GET /api/leases/:id`
+- `POST /api/leases/:id/renew`
+- `POST /api/leases/:id/release`
+- `POST /api/handoffs`
+- `GET /api/handoffs/:id`
+- `POST /api/handoffs/:id/transition`
 - `POST /api/hosts`
 - `GET /api/hosts`
 - `POST /api/commands`
@@ -114,6 +127,20 @@ Goal: centralize lifecycle and remote inbound routing.
 8. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
 Completion: remote menu actions work even when a specific CLI adapter has not started yet, and the relay can observe daemon host liveness plus command queue progress.
+
+### 3A. Own Portable Session Execution
+
+Goal: keep the user-facing task identity portable across hosts while native CLI session ids remain adapter-specific metadata.
+
+1. Relay creates or updates a stable session through `POST /api/sessions`.
+2. Relay creates a generation through `POST /api/generations`. The generation records host, adapter, native CLI metadata, worktree metadata, checkpoint metadata, and result state.
+3. A daemon host claims execution ownership through `POST /api/leases/claim`.
+4. The lease holder renews or releases the lease with the current `hostId`, `fencingToken`, and `leaseToken`.
+5. Generation updates require the current lease holder. Stale fencing tokens return `409`.
+6. A handoff records `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`, or enters `failed`.
+7. A fork creates a child generation from a prior generation checkpoint without mutating the parent generation.
+
+Completion: the relay can show the portable session id, current generation, lease holder, handoff history, and fork lineage without treating native CLI ids as the primary identity.
 
 ### 4. Choose CLI, Project, and Session in the Relay Web Page
 
@@ -280,4 +307,5 @@ Completion: remote target selection and message send both work again.
 - User-input requests can be answered remotely and unblock the waiting operation.
 - Sleeping adapters can be launched on demand by daemon-owned remote actions.
 - Daemons register as relay hosts, become offline when their heartbeat expires, and execute only known relay command refs with claim-token result reporting.
+- Portable sessions, generations, leases, handoffs, and forks live in relay state; stale fencing tokens cannot mutate active generations.
 - Offline and auth failures provide a clear next action.

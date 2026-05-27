@@ -73,6 +73,28 @@ Current encryption boundary: pairing now exchanges public-key material and nonce
 
 `POST /api/attention/ack` accepts `{ "sessionId": "...", "ids": ["..."] }` and hides acknowledged items for the paired browser device.
 
+## Portable Sessions And Leases
+
+Relay-owned portable sessions use these desktop-authenticated endpoints:
+
+- `POST /api/sessions`: create or update a stable relay session.
+- `GET /api/sessions/:id`: read the session plus current generation and active lease, if present.
+- `POST /api/generations`: create a generation and make it current for its session.
+- `GET /api/generations/:id`: read a generation.
+- `POST /api/generations/:id/update`: mutate lease-protected generation fields. Requires current `hostId`, `fencingToken`, and `leaseToken`.
+- `POST /api/generations/:id/fork`: create a child generation from the parent checkpoint without mutating the parent. Requires current lease credentials.
+- `POST /api/leases/claim`: claim active execution ownership for a generation.
+- `GET /api/leases/:id`: read a lease and refresh expiry.
+- `POST /api/leases/:id/renew`: extend an active lease. Requires current lease credentials.
+- `POST /api/leases/:id/release`: release an active lease. Requires current lease credentials.
+- `POST /api/handoffs`: create a handoff record.
+- `GET /api/handoffs/:id`: read a handoff record.
+- `POST /api/handoffs/:id/transition`: move a handoff through its documented state sequence.
+
+Lease-protected writes use two fences. `fencingToken` is monotonically increasing per generation and rejects stale owners after reclaim. `leaseToken` is the opaque secret returned to the active holder. A stale host, stale fencing token, or stale lease token returns `409` and does not mutate the generation.
+
+Handoff transitions are ordered: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. Forks preserve parent generation immutability and link the child with `baseGenerationId`.
+
 ## Worktree-Lite
 
 `legax worktree` exposes a small, local-only workflow:

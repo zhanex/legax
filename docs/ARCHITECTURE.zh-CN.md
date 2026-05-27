@@ -60,7 +60,8 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 按 `targetAgentId` 路由手机入站消息。
    - 将 relay 状态保存到 `relay.storePath`；开发用 relay 默认是 `./data/relay-store.json`，独立部署 relay 默认是 `/var/lib/legax-relay/relay-store.json`。
    - 使用第一个正式 relay store schema：`legax.relay/1`。这不是 “V2” 格式；Legax 还没有发布稳定 V1。
-   - 拥有可迁移的 relay session 状态，包括 sessions、generations、leases、hosts、devices、transports、inbox、commands、metadata events、artifacts、workflow definitions/runs。参见 [Relay Store](RELAY_STORE.zh-CN.md)。
+   - 拥有可迁移的 relay session 状态，包括 sessions、generations、leases、handoffs、hosts、devices、transports、inbox、commands、metadata events、artifacts、workflow definitions/runs。参见 [Relay Store](RELAY_STORE.zh-CN.md)。
+   - 将 Codex、Claude Code、Gemini CLI 和 OpenCode 的原生 session id 视为 generation 元数据，而不是公开的 relay session 身份。
    - 暴露 relay 拥有的 host registry 和 command queue。relay 记录 host 心跳、命令可执行性、claim、terminal result 和 stale result 拒绝；本地 daemon 负责执行 allowlist 内的命令。
 
 4. 第三方通讯通道
@@ -117,6 +118,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 让并发 Codex、Claude、Gemini 和 OpenCode 工作共享同一个 relay session。
    - daemon 运行时轮询 relay `/api/messages`；relay 拥有的 Telegram 与飞书/Lark 入站动作都进入同一条消息队列，因此远端菜单和按需启动不依赖某个具体 adapter 已经存活。
    - daemon 会把自己注册为 relay host，携带版本、平台、已启用 adapter 元数据、host groups 和支持的 command refs。它轮询 relay command queue，目前只执行不触发 shell 的内置动作，例如 `legax.ping`、`agent.list` 和 `legax.daemon.status`。
+   - 使用 relay sessions 和 generations 作为可迁移身份层；`runtimeStatePath` 可以缓存本地游标和已选原生 session，但 portable sessions、lease 归属、handoff 审计和 fork lineage 的权威状态在 relay。
    - 除非设置 `daemon.restart: false`，否则适配器崩溃后会按有限退避重启。
    - 监听运行时启动请求，并在第三方通道或手机操作指向某个 `autoStart: false` 适配器时按需启动它。
    - 当 `mcpAutoConfigure` 启用时，在启动 Claude Code 或 Gemini CLI 前写入对应的 MCP 配置。

@@ -13,6 +13,7 @@ const REQUIRED_RELAY_STORE_DOMAINS = [
   "sessions",
   "generations",
   "leases",
+  "handoffs",
   "hosts",
   "devices",
   "transports",
@@ -290,6 +291,315 @@ test("self-hosted relay command queue claims, completes, expires, and rejects st
     skipRelayCookie: true
   });
   assert.equal(expired.command.state, "expired");
+});
+
+test("self-hosted relay manages portable sessions, generations, leases, forks, and handoffs", async (t) => {
+  const relay = await startRelay(t, { sessionId: "portable-session-e2e" });
+  const desktopHeaders = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+
+  const sessionResponse = await fetchJson(`${relay.baseUrl}/api/sessions`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      title: "Portable session",
+      selectedAgentId: "gemini-cli",
+      transportBindings: { telegram: { chatId: "1001" } },
+      metadata: { issue: 25 }
+    })
+  });
+  assert.equal(sessionResponse.session.id, "portable-session-e2e");
+  assert.equal(sessionResponse.session.selectedAgentId, "gemini-cli");
+  assert.equal(sessionResponse.session.currentGenerationId, "");
+
+  const generationResponse = await fetchJson(`${relay.baseUrl}/api/generations`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      hostId: "host-a",
+      adapterId: "gemini-cli",
+      nativeSession: { provider: "gemini", id: "native-gemini-session" },
+      worktree: { path: "F:/workspace/example" },
+      checkpoint: { artifactId: "checkpoint-0" }
+    })
+  });
+  assert.equal(generationResponse.generation.sessionId, "portable-session-e2e");
+  assert.equal(generationResponse.generation.hostId, "host-a");
+  assert.deepEqual(generationResponse.generation.nativeSession, { provider: "gemini", id: "native-gemini-session" });
+
+  const sessionAfterGeneration = await fetchJson(`${relay.baseUrl}/api/sessions/portable-session-e2e`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(sessionAfterGeneration.session.currentGenerationId, generationResponse.generation.id);
+
+  const claimed = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: generationResponse.generation.id,
+      hostId: "host-a",
+      ttlMs: 5000
+    })
+  });
+  assert.equal(claimed.lease.state, "active");
+  assert.equal(claimed.lease.hostId, "host-a");
+  assert.ok(claimed.lease.fencingToken);
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}/update`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        hostId: "host-a",
+        fencingToken: "stale-token",
+        state: "running"
+      })
+    }),
+    { status: 409 }
+  );
+
+  const updated = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}/update`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      fencingToken: claimed.lease.fencingToken,
+      leaseToken: claimed.lease.token,
+      state: "running",
+      checkpoint: { artifactId: "checkpoint-1" }
+    })
+  });
+  assert.equal(updated.generation.state, "running");
+  assert.equal(updated.generation.checkpoint.artifactId, "checkpoint-1");
+
+  const renewed = await fetchJson(`${relay.baseUrl}/api/leases/${claimed.lease.id}/renew`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      fencingToken: claimed.lease.fencingToken,
+      leaseToken: claimed.lease.token,
+      ttlMs: 5000
+    })
+  });
+  assert.equal(renewed.lease.state, "active");
+  assert.ok(Date.parse(renewed.lease.expiresAt) >= Date.parse(claimed.lease.expiresAt));
+
+  const released = await fetchJson(`${relay.baseUrl}/api/leases/${claimed.lease.id}/release`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      fencingToken: claimed.lease.fencingToken,
+      leaseToken: claimed.lease.token
+    })
+  });
+  assert.equal(released.lease.state, "released");
+
+  const reclaimed = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: generationResponse.generation.id,
+      hostId: "host-b",
+      ttlMs: 5000
+    })
+  });
+  assert.equal(reclaimed.lease.hostId, "host-b");
+  assert.notEqual(reclaimed.lease.fencingToken, claimed.lease.fencingToken);
+
+  await fetchJson(`${relay.baseUrl}/api/leases/${reclaimed.lease.id}/release`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-b",
+      fencingToken: reclaimed.lease.fencingToken,
+      leaseToken: reclaimed.lease.token
+    })
+  });
+
+  const expiringLease = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: generationResponse.generation.id,
+      hostId: "host-c",
+      ttlMs: 1,
+      reclaimExpired: true
+    })
+  });
+  await sleep(20);
+  const expiredLease = await fetchJson(`${relay.baseUrl}/api/leases/${expiringLease.lease.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(expiredLease.lease.state, "expired");
+  const generationAfterLeaseExpiry = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(generationAfterLeaseExpiry.generation.leaseId, "");
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        sessionId: "portable-session-e2e",
+        generationId: generationResponse.generation.id,
+        hostId: "host-d",
+        ttlMs: 5000
+      })
+    }),
+    { status: 409 }
+  );
+
+  const reclaimedExpired = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: generationResponse.generation.id,
+      hostId: "host-d",
+      ttlMs: 5000,
+      reclaimExpired: true
+    })
+  });
+  assert.equal(reclaimedExpired.lease.hostId, "host-d");
+
+  const parentBeforeFork = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  const forked = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}/fork`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      leaseHostId: "host-d",
+      fencingToken: reclaimedExpired.lease.fencingToken,
+      leaseToken: reclaimedExpired.lease.token,
+      hostId: "host-e",
+      adapterId: "gemini-cli",
+      checkpoint: { artifactId: "checkpoint-1" }
+    })
+  });
+  assert.equal(forked.generation.baseGenerationId, generationResponse.generation.id);
+  assert.equal(forked.generation.hostId, "host-e");
+  const parentAfterFork = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.deepEqual(parentAfterFork.generation, parentBeforeFork.generation);
+
+  const handoff = await fetchJson(`${relay.baseUrl}/api/handoffs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: forked.generation.id,
+      fromHostId: "host-e",
+      toHostId: "host-f"
+    })
+  });
+  assert.equal(handoff.handoff.state, "requested");
+
+  for (const state of ["checkpointed", "uploaded", "released", "claimed", "restored", "resumed"]) {
+    const transitioned = await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}/transition`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({ state })
+    });
+    assert.equal(transitioned.handoff.state, state);
+    const retried = await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}/transition`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({ state })
+    });
+    assert.equal(retried.handoff.state, state);
+  }
+
+  const readHandoff = await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(readHandoff.handoff.state, "resumed");
+  assert.equal(readHandoff.handoff.transitions.length, 7);
+
+  const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  const handoffEvents = store.events
+    .filter((event) => event.handoffId === handoff.handoff.id)
+    .map((event) => event.kind);
+  assert.deepEqual(handoffEvents, [
+    "handoff.requested",
+    "handoff.checkpointed",
+    "handoff.uploaded",
+    "handoff.released",
+    "handoff.claimed",
+    "handoff.restored",
+    "handoff.resumed"
+  ]);
+
+  const failedHandoff = await fetchJson(`${relay.baseUrl}/api/handoffs`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "portable-session-e2e",
+      generationId: forked.generation.id,
+      fromHostId: "host-e",
+      toHostId: "host-g"
+    })
+  });
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/handoffs/${failedHandoff.handoff.id}/transition`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({ state: "restored" })
+    }),
+    { status: 409 }
+  );
+  const failed = await fetchJson(`${relay.baseUrl}/api/handoffs/${failedHandoff.handoff.id}/transition`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ state: "failed", error: { message: "checkpoint missing" } })
+  });
+  assert.equal(failed.handoff.state, "failed");
+  assert.equal(failed.handoff.error.message, "checkpoint missing");
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/handoffs/${failedHandoff.handoff.id}/transition`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({ state: "requested" })
+    }),
+    { status: 409 }
+  );
 });
 
 test("self-hosted relay migrates legacy relay store version 1 files", async (t) => {

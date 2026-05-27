@@ -60,7 +60,8 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Routes inbound phone messages by `targetAgentId`.
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.
    - Uses the first formal relay store schema, `legax.relay/1`. This is not a "V2" format; Legax has not shipped a stable V1 release.
-   - Owns portable relay session state, including sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
+   - Owns portable relay session state, including sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
+   - Treats native Codex, Claude Code, Gemini CLI, and OpenCode session ids as generation metadata, not as public relay session identity.
    - Exposes a relay-owned host registry and command queue. The relay records host heartbeats, command eligibility, claims, terminal results, and stale-result rejection; local daemons execute the allowlisted commands.
 
 4. Third-party transports
@@ -117,6 +118,7 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
    - Polls relay `/api/messages` while running; relay-owned Telegram and Feishu/Lark inbound actions enter through the same message queue, so remote menus and on-demand launches do not depend on any specific adapter being alive.
    - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and currently executes only non-shell built-ins such as `legax.ping`, `agent.list`, and `legax.daemon.status`.
+   - Uses relay sessions and generations as the portable identity layer; `runtimeStatePath` may cache local cursors and selected native sessions, but relay state is authoritative for portable sessions, lease ownership, handoff audit, and fork lineage.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
    - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
    - Writes adapter-specific MCP config before launching Claude Code or Gemini CLI when `mcpAutoConfigure` is enabled.

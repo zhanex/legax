@@ -73,6 +73,28 @@ relay 浏览器配对返回协议化 offer：
 
 `POST /api/attention/ack` 接收 `{ "sessionId": "...", "ids": ["..."] }`，并仅为当前已配对浏览器设备隐藏这些事项。
 
+## Portable Sessions 与 Leases
+
+relay 拥有的 portable sessions 使用以下桌面鉴权接口：
+
+- `POST /api/sessions`：创建或更新稳定 relay session。
+- `GET /api/sessions/:id`：读取 session，并在存在时返回当前 generation 和 active lease。
+- `POST /api/generations`：创建 generation，并把它设为 session 的当前 generation。
+- `GET /api/generations/:id`：读取 generation。
+- `POST /api/generations/:id/update`：修改受 lease 保护的 generation 字段。必须携带当前 `hostId`、`fencingToken` 和 `leaseToken`。
+- `POST /api/generations/:id/fork`：从父 generation checkpoint 创建子 generation，且不修改父 generation。必须携带当前 lease 凭据。
+- `POST /api/leases/claim`：claim 一个 generation 的 active execution ownership。
+- `GET /api/leases/:id`：读取 lease，并刷新过期状态。
+- `POST /api/leases/:id/renew`：延长 active lease。必须携带当前 lease 凭据。
+- `POST /api/leases/:id/release`：释放 active lease。必须携带当前 lease 凭据。
+- `POST /api/handoffs`：创建 handoff 记录。
+- `GET /api/handoffs/:id`：读取 handoff 记录。
+- `POST /api/handoffs/:id/transition`：按文档化状态序列推进 handoff。
+
+受 lease 保护的写入使用两层 fence。`fencingToken` 在每个 generation 内单调递增，用于在 reclaim 后拒绝旧 owner。`leaseToken` 是返回给 active holder 的不透明 secret。过期 host、过期 fencing token 或过期 lease token 都会返回 `409`，且不会修改 generation。
+
+handoff transition 顺序为：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。fork 保持父 generation 不变，并通过 `baseGenerationId` 关联子 generation。
+
 ## Worktree-Lite
 
 `legax worktree` 提供本地轻量工作树流程：
