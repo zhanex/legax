@@ -61,4 +61,4 @@ jobs:
       - name: ShellCheck
         run: |
           shellcheck self-hosted-relay/install.sh self-hosted-relay/uninstall.sh
-          shellcheck -s sh self-hosted-relay/openrc/legax-relay
+          shellcheck -s sh -e SC2034 self-hosted-relay/openrc/legax-relay

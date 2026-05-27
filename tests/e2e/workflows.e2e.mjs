@@ -46,5 +46,5 @@ test("security scanning workflow covers workflow, shell, and secret scanners", a
   assert.match(workflow, /GITLEAKS_ENABLE_COMMENTS:\s*"false"/);
   assert.match(workflow, /raven-actions\/actionlint@v2\.1\.2/);
   assert.match(workflow, /shellcheck self-hosted-relay\/install\.sh self-hosted-relay\/uninstall\.sh/);
-  assert.match(workflow, /shellcheck -s sh self-hosted-relay\/openrc\/legax-relay/);
+  assert.match(workflow, /shellcheck -s sh -e SC2034 self-hosted-relay\/openrc\/legax-relay/);
 });
