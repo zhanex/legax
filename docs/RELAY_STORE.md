@@ -45,7 +45,7 @@ Required formal domains:
 | `leases` | Future coordination leases for workflow and host ownership. |
 | `hosts` | Future host identity and capability records. |
 | `devices` | Paired browser devices keyed by relay device id, with token hashes and revocation metadata. |
-| `transports` | Future relay-visible transport identity and routing metadata. |
+| `transports` | Relay-visible transport runtime state, including Telegram offset, dedupe ids, and current target selection. |
 | `inbox` | Future normalized inbound items for relay routing and workflow orchestration. |
 | `commands` | Future command records created by phone, Telegram, Feishu/Lark, or workflow actions. |
 | `events` | Relay metadata event stream for append/update paths. This is separate from per-session agent-visible event queues. |

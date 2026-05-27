@@ -54,7 +54,7 @@ daemon:
   restartBackoffMaxMs: 30000
   restartMaxAttempts: 5       # rapid failures before an adapter restart circuit opens
   restartHealthyAfterMs: 60000 # reset the restart circuit after this much uptime
-  remoteRouter: true          # daemon owns relay/Telegram inbound routing; adapters only consume their inbox
+  remoteRouter: true          # daemon polls relay; relay owns Telegram polling/webhooks and Telegram outbound when a relay transport is enabled
   remotePollIntervalMs: 1000
   projectRoots:               # local folders the Telegram Mini App project picker may browse
     - F:/workspace
@@ -99,6 +99,10 @@ security:
 # Recommended default: only `self-hosted-relay` is enabled. Telegram and webhook
 # transports are kept off in this template; turn them on after reading the
 # tradeoffs in docs/ARCHITECTURE.md and Local files and secrets in README.md.
+# When a relay transport is enabled, Telegram is relay-owned: the relay polls
+# getUpdates (or receives /api/telegram/events webhooks), writes normalized
+# messages into /api/messages, and fans desktop /api/events back out to Telegram.
+# Daemon/adapters keep direct Telegram polling/sending only as the no-relay fallback.
 transports:
   - name: self-hosted-relay
     type: relay
@@ -115,6 +119,8 @@ transports:
   - name: telegram
     type: telegram
     enabled: false
+    # polling: true                              # relay-owned getUpdates polling; set false when Telegram webhooks call /api/telegram/events
+    # webhookSecret: replace-with-a-telegram-webhook-secret # verifies x-telegram-bot-api-secret-token when using webhooks
     botToken: TELEGRAM_BOT_TOKEN_VALUE_HERE      # paste the @BotFather token
     chatId: 0                                    # set to your numeric chat id (run scripts/configure-telegram-chat.mjs to discover it)
     # apiBaseUrl: http://127.0.0.1:9000/bot      # optional: local Bot API gateway or test relay; defaults to Telegram

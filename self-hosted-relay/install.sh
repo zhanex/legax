@@ -66,6 +66,9 @@ SERVER_SRC="$SCRIPT_DIR/server.mjs"
 LIB_SRC_DIR="$SCRIPT_DIR/lib"
 RELAY_CORE_FILES=(
   "relay-server-core.mjs"
+  "telegram-transport.mjs"
+  "outbound-transports.mjs"
+  "menu-groups.mjs"
   "yaml.mjs"
   "paths.mjs"
 )

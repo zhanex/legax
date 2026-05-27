@@ -54,7 +54,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
 
 3. 自部署 relay
    - `scripts/simple-relay-server.mjs`
-   - 通过 `scripts/lib/relay-server-core.mjs` 共享 HTTP、store、配对、TWA、飞书和浏览器行为。
+   - 通过 `scripts/lib/relay-server-core.mjs` 共享 HTTP、store、配对、TWA、Telegram、飞书和浏览器行为。
    - 由 `self-hosted-relay/` 打包为 Linux 安装器，安装薄启动器和共享 relay core 文件。
    - 提供桌面端 API、手机端 API 和手机网页。
    - 按 `targetAgentId` 路由手机入站消息。
@@ -63,13 +63,13 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 拥有可迁移的 relay session 状态，包括 sessions、generations、leases、hosts、devices、transports、inbox、commands、metadata events、artifacts、workflow definitions/runs。参见 [Relay Store](RELAY_STORE.zh-CN.md)。
 
 4. 第三方通讯通道
-   - Telegram 支持出站消息、入站轮询、inline CLI/project/session 按钮和审批按钮。
+   - Telegram 支持 relay 侧拥有的出站消息、`getUpdates` 轮询或 `/api/telegram/events` webhook、inline CLI/project/session 按钮和审批按钮。
    - Telegram 出站可在 daemon、CLI、transport 三层过滤（`daemon.notifications`、`codex/claude/gemini/opencode.notifications`、`transports[].notifications`）。过滤只影响 Telegram；relay 仍可保留完整事件流。
    - Telegram 消息会用 HTML 格式化，并在触碰 Telegram 长度限制前拆成多条 `sendMessage`。
    - 飞书/Lark 支持自建应用 bot 出站消息、交互式审批卡片，以及通过 relay 的 `/api/feishu/events` 端点接收入站事件回调。
    - 飞书/Lark 投递可通过 `transports[].notifications` 或 `transports[].feishuNotifications` 使用同样的 `messageDetail` 策略形状过滤。
    - 通用 webhook 支持向自定义服务投递出站事件。
-   - 共用同一个 Telegram bot 时，只应有一个 poller 读取 `getUpdates`；消息按 `targetAgentId` 入队。
+   - 启用 relay transport 时，只应由 relay 读取 Telegram `getUpdates`。daemon/adapter 直连 Telegram 仅作为无 relay 时的兜底。
 
 5. Codex Agent
    - 标准配置键：`codex`。
@@ -114,7 +114,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - `scripts/legax-daemon.mjs`
    - 读取同一份 YAML 配置并看护所有启用的 CLI 适配器。
    - 让并发 Codex、Claude、Gemini 和 OpenCode 工作共享同一个 relay session。
-   - daemon 运行时由 daemon 统一负责 relay、Telegram 以及经 relay 进入的飞书/Lark 入站路由，因此远端菜单和按需启动不依赖某个具体 adapter 已经存活。
+   - daemon 运行时轮询 relay `/api/messages`；relay 拥有的 Telegram 与飞书/Lark 入站动作都进入同一条消息队列，因此远端菜单和按需启动不依赖某个具体 adapter 已经存活。
    - 除非设置 `daemon.restart: false`，否则适配器崩溃后会按有限退避重启。
    - 监听运行时启动请求，并在第三方通道或手机操作指向某个 `autoStart: false` 适配器时按需启动它。
    - 当 `mcpAutoConfigure` 启用时，在启动 Claude Code 或 Gemini CLI 前写入对应的 MCP 配置。
@@ -243,9 +243,9 @@ daemon 运行时由 daemon remote router 按以下顺序解析目标 Agent；`da
 
 **2. 谁负责轮询远端入站通道？**
 
-统一 daemon 默认启用 `daemon.remoteRouter: true`。daemon 负责 relay `/api/messages` 轮询和 Telegram `getUpdates`，把消息按目标写入 per-agent inbox，并为尚未运行的 adapter 创建启动请求。飞书/Lark 回调先进入 relay，然后沿用同一条 `/api/messages` 路径。由 daemon 启动的 adapter 只读取自己的 inbox，因此远端交互不依赖 Codex 或任何其它具体 adapter。
+统一 daemon 默认启用 `daemon.remoteRouter: true`。启用 relay transport 时，Telegram 归 relay 所有：relay 读取 Telegram `getUpdates` 或接收 `/api/telegram/events` webhook，将文本和回调归一化写入 `/api/messages`，ack callback query，并把 `/api/events` fan-out 回 Telegram。daemon 轮询 relay `/api/messages`，把消息按目标写入 per-agent inbox，并为尚未运行的 adapter 创建启动请求。飞书/Lark 回调也先进入 relay，然后沿用同一条 `/api/messages` 路径。由 daemon 启动的 adapter 只读取自己的 inbox，因此远端交互不依赖 Codex 或任何其它具体 adapter。
 
-如果只运行单个 adapter 而不运行 daemon，Telegram 长轮询游标仍然只能由一个进程持有，其他进程必须让出。单 adapter 兜底解析顺序为：
+如果没有启用 relay transport，Telegram 直连轮询仍作为独立运行兜底。Telegram 长轮询游标只能由一个进程持有，其他进程必须让出。兜底解析顺序为：
 
 1. `transports[N].pollerAgentId`（per-transport 配置）。
 2. `config.routing.telegramPollerAgentId`（全局）。

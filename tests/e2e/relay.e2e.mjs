@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import http from "node:http";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { fetchJson, pairRelayDevice, pluginRoot, startRelay, waitFor } from "./helpers.mjs";
+import { closeHttpServer, fetchJson, getFreePort, pairRelayDevice, pluginRoot, startRelay, waitFor } from "./helpers.mjs";
 
 async function pairBrowser(relay, { code = "482913", sessionId = relay.sessionId, label = "test phone" } = {}) {
   return pairRelayDevice(relay, { code, sessionId, label });
@@ -37,7 +38,7 @@ test("relay entrypoints delegate HTTP behavior to the shared relay core", async 
     assert.doesNotMatch(source, /function createPairingCode\b/, name);
   }
 
-  for (const file of ["relay-server-core.mjs", "yaml.mjs", "paths.mjs"]) {
+  for (const file of ["relay-server-core.mjs", "yaml.mjs", "paths.mjs", "telegram-transport.mjs", "outbound-transports.mjs", "menu-groups.mjs"]) {
     const source = await fs.readFile(new URL(`../../scripts/lib/${file}`, import.meta.url), "utf8");
     const standaloneCopy = await fs.readFile(new URL(`../../self-hosted-relay/lib/${file}`, import.meta.url), "utf8");
     assert.equal(standaloneCopy, source, `${file} copied into self-hosted relay`);
@@ -152,6 +153,208 @@ test("self-hosted relay rejects unsupported or corrupted relay stores clearly", 
       assert.match(error.body.error, /relay-e2e-/);
       return true;
     }
+  );
+});
+
+test("self-hosted relay normalizes Telegram webhook updates into relay messages", async (t) => {
+  const relay = await startRelay(t, {
+    sessionId: "relay-telegram-webhook-e2e",
+    extraYaml: `
+routing:
+  defaultTarget: codex-cli
+transports:
+  - name: telegram
+    type: telegram
+    enabled: true
+    polling: false
+    botToken: test-token
+    chatId: 42
+`
+  });
+
+  const postUpdate = (update) => fetchJson(`${relay.baseUrl}/api/telegram/events?transport=telegram`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify(update)
+  });
+
+  const first = await postUpdate({
+    update_id: 7000,
+    message: {
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: 42 },
+      text: "hello via telegram webhook"
+    }
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.message.transport, "telegram");
+
+  const messages = await fetchJson(`${relay.baseUrl}/api/messages?sessionId=${relay.sessionId}&after=0&agentId=codex-cli`, {
+    headers: { "x-legax-secret": relay.desktopSecret }
+  });
+  assert.equal(messages.messages.length, 1);
+  assert.equal(messages.messages[0].text, "hello via telegram webhook");
+  assert.equal(messages.messages[0].id, "telegram:7000");
+
+  const duplicate = await postUpdate({
+    update_id: 7000,
+    message: {
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: 42 },
+      text: "duplicate should not enqueue"
+    }
+  });
+  assert.equal(duplicate.duplicate, true);
+
+  const rejected = await postUpdate({
+    update_id: 7001,
+    message: {
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: 99 },
+      text: "wrong chat should not enqueue"
+    }
+  });
+  assert.equal(rejected.ignored, true);
+
+  const afterIgnored = await fetchJson(`${relay.baseUrl}/api/messages?sessionId=${relay.sessionId}&after=0&agentId=codex-cli`, {
+    headers: { "x-legax-secret": relay.desktopSecret }
+  });
+  assert.equal(afterIgnored.messages.length, 1);
+});
+
+test("self-hosted relay polls Telegram and acknowledges callbacks", async (t) => {
+  const telegram = await startRelayFakeTelegram(t);
+  const relay = await startRelay(t, {
+    sessionId: "relay-telegram-poll-e2e",
+    extraYaml: `
+routing:
+  defaultTarget: codex-cli
+transports:
+  - name: telegram
+    type: telegram
+    enabled: true
+    botToken: test-token
+    chatId: 42
+    apiBaseUrl: ${telegram.apiBaseUrl}
+    pollIntervalMs: 100
+    timeoutMs: 1000
+`
+  });
+
+  telegram.pushMessage("hello via relay poll");
+  telegram.pushCallback("legax:approve:codex-approval-1", "callback-approval-1");
+
+  await waitFor(async () => {
+    const messages = await fetchJson(`${relay.baseUrl}/api/messages?sessionId=${relay.sessionId}&after=0&agentId=codex-cli`, {
+      headers: { "x-legax-secret": relay.desktopSecret }
+    });
+    assert.equal(messages.messages.length, 2, relay.stderr());
+    assert.deepEqual(messages.messages.map((message) => message.type).sort(), ["permission_decision", "text"]);
+    assert.ok(messages.messages.some((message) => message.text === "hello via relay poll"));
+    assert.ok(messages.messages.some((message) => message.requestId === "codex-approval-1" && message.decision === "approve"));
+  }, { timeoutMs: 7000 });
+
+  await waitFor(() => {
+    assert.ok(telegram.answerCallbacks.some((body) => body.callback_query_id === "callback-approval-1"));
+  }, { timeoutMs: 3000 });
+
+  const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.ok(store.transports["telegram:telegram"].offset >= 9002);
+  assert.equal(store.transports["telegram:telegram"].seen["telegram:9000"], true);
+  assert.equal(store.transports["telegram:telegram"].seen["telegram:9001"], true);
+});
+
+test("self-hosted relay fans desktop events out to Telegram", async (t) => {
+  const telegram = await startRelayFakeTelegram(t);
+  const relay = await startRelay(t, {
+    sessionId: "relay-telegram-outbound-e2e",
+    extraYaml: `
+transports:
+  - name: telegram
+    type: telegram
+    enabled: true
+    polling: false
+    botToken: test-token
+    chatId: 42
+    apiBaseUrl: ${telegram.apiBaseUrl}
+    timeoutMs: 1000
+`
+  });
+
+  await fetchJson(`${relay.baseUrl}/api/events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      agentId: "codex-cli",
+      agentLabel: "Codex CLI",
+      kind: "status",
+      text: "relay outbound status"
+    })
+  });
+
+  await telegram.waitForSend((body) => /relay outbound status/.test(body.text ?? ""));
+});
+
+test("self-hosted relay Telegram polling preserves concurrent relay store writes", async (t) => {
+  const telegram = await startRelayFakeTelegram(t, { getUpdatesDelayMs: 350 });
+  const relay = await startRelay(t, {
+    sessionId: "relay-telegram-store-race-e2e",
+    extraYaml: `
+routing:
+  defaultTarget: codex-cli
+transports:
+  - name: telegram
+    type: telegram
+    enabled: true
+    botToken: test-token
+    chatId: 42
+    apiBaseUrl: ${telegram.apiBaseUrl}
+    pollIntervalMs: 100
+    timeoutMs: 1000
+`
+  });
+
+  await waitFor(() => {
+    assert.ok(telegram.getUpdatesCalls() > 0);
+  }, { timeoutMs: 3000 });
+
+  telegram.pushMessage("poll result after concurrent event");
+  await fetchJson(`${relay.baseUrl}/api/events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      agentId: "codex-cli",
+      agentLabel: "Codex CLI",
+      kind: "status",
+      text: "event written while telegram poll is in flight"
+    })
+  });
+
+  await waitFor(async () => {
+    const messages = await fetchJson(`${relay.baseUrl}/api/messages?sessionId=${relay.sessionId}&after=0&agentId=codex-cli`, {
+      headers: { "x-legax-secret": relay.desktopSecret }
+    });
+    assert.ok(messages.messages.some((message) => message.text === "poll result after concurrent event"));
+  }, { timeoutMs: 7000 });
+
+  const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+  assert.ok(
+    events.events.some((event) => event.text === "event written while telegram poll is in flight"),
+    JSON.stringify(events.events, null, 2)
   );
 });
 
@@ -791,3 +994,87 @@ test("self-hosted relay keeps empty-secret insecure dev mode on loopback", async
   });
   assert.equal(result.ok, true);
 });
+
+async function startRelayFakeTelegram(t, { getUpdatesDelayMs = 0 } = {}) {
+  const port = await getFreePort();
+  const pendingUpdates = [];
+  const answerCallbacks = [];
+  const sendMessages = [];
+  let nextUpdateId = 9000;
+  let getUpdatesCalls = 0;
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const raw = Buffer.concat(chunks).toString("utf8");
+    const body = raw ? JSON.parse(raw) : {};
+    const method = String(req.url || "").split("/").pop();
+    if (method === "getUpdates") {
+      getUpdatesCalls += 1;
+      if (getUpdatesDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, getUpdatesDelayMs));
+      const offset = Number(body.offset ?? 0);
+      const ready = pendingUpdates.filter((update) => Number(update.update_id) >= offset);
+      pendingUpdates.splice(0, pendingUpdates.length);
+      sendJsonResponse(res, { ok: true, result: ready });
+      return;
+    }
+    if (method === "answerCallbackQuery") {
+      answerCallbacks.push(body);
+      sendJsonResponse(res, { ok: true, result: true });
+      return;
+    }
+    if (method === "sendMessage") {
+      sendMessages.push(body);
+      sendJsonResponse(res, { ok: true, result: { message_id: 1 } });
+      return;
+    }
+    sendJsonResponse(res, { ok: false, description: `unexpected method ${method}` }, 404);
+  });
+  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
+  t.after(() => closeHttpServer(server));
+
+  function pushMessage(text) {
+    pendingUpdates.push({
+      update_id: nextUpdateId++,
+      message: {
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: 42 },
+        text
+      }
+    });
+  }
+
+  function pushCallback(data, callbackId) {
+    pendingUpdates.push({
+      update_id: nextUpdateId++,
+      callback_query: {
+        id: callbackId,
+        data,
+        from: { id: 42 },
+        message: { chat: { id: 42 } }
+      }
+    });
+  }
+
+  async function waitForSend(predicate, { timeoutMs = 5000 } = {}) {
+    return await waitFor(async () => {
+      const found = sendMessages.find(predicate);
+      assert.ok(found, sendMessages.map((body) => body.text).join("\n---\n"));
+      return found;
+    }, { timeoutMs, intervalMs: 100 });
+  }
+
+  return {
+    apiBaseUrl: `http://127.0.0.1:${port}/bot`,
+    answerCallbacks,
+    getUpdatesCalls: () => getUpdatesCalls,
+    pushMessage,
+    pushCallback,
+    sendMessages,
+    waitForSend
+  };
+}
+
+function sendJsonResponse(res, body, status = 200) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(body));
+}
