@@ -56,6 +56,13 @@ daemon:
   restartHealthyAfterMs: 60000 # reset the restart circuit after this much uptime
   remoteRouter: true          # daemon polls relay; relay owns Telegram polling/webhooks and Telegram outbound when a relay transport is enabled
   remotePollIntervalMs: 1000
+  hostId: ""                  # optional stable relay host id; empty derives from hostname and config path
+  hostGroups:
+    - default                 # relay command queue can target a host group instead of a single host
+  hostHeartbeatTtlMs: 30000   # relay marks this daemon offline after this TTL without heartbeat
+  hostHeartbeatIntervalMs: 10000
+  commandPollIntervalMs: 1000
+  commandClaimTtlMs: 30000    # max time this daemon may hold a claimed relay command before retry/failure
   projectRoots:               # local folders the Telegram Mini App project picker may browse
     - F:/workspace
   projectRootHiddenNames:

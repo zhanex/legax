@@ -35,6 +35,13 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 
 - `POST /api/events`
 - `GET /api/messages`
+- `POST /api/hosts`
+- `GET /api/hosts`
+- `POST /api/commands`
+- `GET /api/commands`
+- `GET /api/commands/:id`
+- `POST /api/commands/:id/claim`
+- `POST /api/commands/:id/result`
 - `POST /api/pairing-codes`
 - `GET /api/devices`
 - `DELETE /api/devices/:id`
@@ -102,9 +109,11 @@ Goal: centralize lifecycle and remote inbound routing.
 3. Daemon starts adapters with `autoStart: true`.
 4. Relay owns Telegram `getUpdates` polling or `/api/telegram/events` webhooks and Feishu/Lark callbacks, then writes normalized actions into `/api/messages`.
 5. Daemon polls relay `/api/messages` and routes inbound messages to per-agent inbox queues.
-6. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
+6. Daemon posts `/api/hosts` heartbeats with its host id, groups, enabled adapter metadata, and supported command refs.
+7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token.
+8. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
-Completion: remote menu actions work even when a specific CLI adapter has not started yet.
+Completion: remote menu actions work even when a specific CLI adapter has not started yet, and the relay can observe daemon host liveness plus command queue progress.
 
 ### 4. Choose CLI, Project, and Session in the Relay Web Page
 
@@ -270,4 +279,5 @@ Completion: remote target selection and message send both work again.
 - Permission requests always require an explicit remote decision and return through the CLI's native callback when that adapter supports one.
 - User-input requests can be answered remotely and unblock the waiting operation.
 - Sleeping adapters can be launched on demand by daemon-owned remote actions.
+- Daemons register as relay hosts, become offline when their heartbeat expires, and execute only known relay command refs with claim-token result reporting.
 - Offline and auth failures provide a clear next action.

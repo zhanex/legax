@@ -61,6 +61,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 将 relay 状态保存到 `relay.storePath`；开发用 relay 默认是 `./data/relay-store.json`，独立部署 relay 默认是 `/var/lib/legax-relay/relay-store.json`。
    - 使用第一个正式 relay store schema：`legax.relay/1`。这不是 “V2” 格式；Legax 还没有发布稳定 V1。
    - 拥有可迁移的 relay session 状态，包括 sessions、generations、leases、hosts、devices、transports、inbox、commands、metadata events、artifacts、workflow definitions/runs。参见 [Relay Store](RELAY_STORE.zh-CN.md)。
+   - 暴露 relay 拥有的 host registry 和 command queue。relay 记录 host 心跳、命令可执行性、claim、terminal result 和 stale result 拒绝；本地 daemon 负责执行 allowlist 内的命令。
 
 4. 第三方通讯通道
    - Telegram 支持 relay 侧拥有的出站消息、`getUpdates` 轮询或 `/api/telegram/events` webhook、inline CLI/project/session 按钮和审批按钮。
@@ -115,6 +116,7 @@ TUI 或 PTY 托管只作为兜底 backend。它适合没有结构化模式的 CL
    - 读取同一份 YAML 配置并看护所有启用的 CLI 适配器。
    - 让并发 Codex、Claude、Gemini 和 OpenCode 工作共享同一个 relay session。
    - daemon 运行时轮询 relay `/api/messages`；relay 拥有的 Telegram 与飞书/Lark 入站动作都进入同一条消息队列，因此远端菜单和按需启动不依赖某个具体 adapter 已经存活。
+   - daemon 会把自己注册为 relay host，携带版本、平台、已启用 adapter 元数据、host groups 和支持的 command refs。它轮询 relay command queue，目前只执行不触发 shell 的内置动作，例如 `legax.ping`、`agent.list` 和 `legax.daemon.status`。
    - 除非设置 `daemon.restart: false`，否则适配器崩溃后会按有限退避重启。
    - 监听运行时启动请求，并在第三方通道或手机操作指向某个 `autoStart: false` 适配器时按需启动它。
    - 当 `mcpAutoConfigure` 启用时，在启动 Claude Code 或 Gemini CLI 前写入对应的 MCP 配置。
@@ -243,7 +245,7 @@ daemon 运行时由 daemon remote router 按以下顺序解析目标 Agent；`da
 
 **2. 谁负责轮询远端入站通道？**
 
-统一 daemon 默认启用 `daemon.remoteRouter: true`。启用 relay transport 时，Telegram 归 relay 所有：relay 读取 Telegram `getUpdates` 或接收 `/api/telegram/events` webhook，将文本和回调归一化写入 `/api/messages`，ack callback query，并把 `/api/events` fan-out 回 Telegram。daemon 轮询 relay `/api/messages`，把消息按目标写入 per-agent inbox，并为尚未运行的 adapter 创建启动请求。飞书/Lark 回调也先进入 relay，然后沿用同一条 `/api/messages` 路径。由 daemon 启动的 adapter 只读取自己的 inbox，因此远端交互不依赖 Codex 或任何其它具体 adapter。
+统一 daemon 默认启用 `daemon.remoteRouter: true`。启用 relay transport 时，Telegram 归 relay 所有：relay 读取 Telegram `getUpdates` 或接收 `/api/telegram/events` webhook，将文本和回调归一化写入 `/api/messages`，ack callback query，并把 `/api/events` fan-out 回 Telegram。daemon 轮询 relay `/api/messages`，把消息按目标写入 per-agent inbox，并为尚未运行的 adapter 创建启动请求。它也会向 `/api/hosts` 发送心跳，并从 `/api/commands` 拉取安全的 daemon 级动作。飞书/Lark 回调也先进入 relay，然后沿用同一条 `/api/messages` 路径。由 daemon 启动的 adapter 只读取自己的 inbox，因此远端交互不依赖 Codex 或任何其它具体 adapter。
 
 如果没有启用 relay transport，Telegram 直连轮询仍作为独立运行兜底。Telegram 长轮询游标只能由一个进程持有，其他进程必须让出。兜底解析顺序为：
 

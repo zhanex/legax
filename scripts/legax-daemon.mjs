@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { dispatchAdditionalTransports } from "./lib/outbound-transports.mjs";
 import { pollInboundTransports, routeInboundMessages } from "./lib/inbound-transports.mjs";
@@ -22,6 +23,7 @@ import {
   resolveConfigRelative,
   resolveRuntimeFile
 } from "./lib/paths.mjs";
+import { packageVersion } from "./lib/version.mjs";
 
 
 const DAEMON_AGENT = {
@@ -29,6 +31,7 @@ const DAEMON_AGENT = {
   agentLabel: "Legax Daemon",
   mode: "interactive"
 };
+const DAEMON_COMMAND_REFS = ["legax.ping", "agent.list", "legax.daemon.status"];
 
 validateAllAdapters(ADAPTERS);
 
@@ -60,6 +63,12 @@ function loadConfig() {
       launchPollIntervalMs: 500,
       remoteRouter: true,
       remotePollIntervalMs: 1000,
+      hostId: "",
+      hostGroups: ["default"],
+      hostHeartbeatTtlMs: 30000,
+      hostHeartbeatIntervalMs: 10000,
+      commandPollIntervalMs: 1000,
+      commandClaimTtlMs: 30000,
       ...(raw.daemon ?? {})
     }
   };
@@ -495,12 +504,54 @@ function formatAgentList(adapters) {
   ].join("\n");
 }
 
+function relaySafeId(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9._:/-]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 120);
+}
+
+function daemonHostId(config) {
+  const configured = relaySafeId(config.daemon?.hostId);
+  if (configured) return configured;
+  const name = relaySafeId(os.hostname().toLowerCase()) || "localhost";
+  const digest = crypto.createHash("sha256")
+    .update(String(config.configPath ?? ""))
+    .digest("hex")
+    .slice(0, 12);
+  return `host-${name}-${digest}`;
+}
+
+function daemonHostGroups(config) {
+  const groups = Array.isArray(config.daemon?.hostGroups)
+    ? config.daemon.hostGroups
+    : [config.daemon?.hostGroup ?? "default"];
+  const normalized = groups.map(relaySafeId).filter(Boolean);
+  return normalized.length > 0 ? normalized : ["default"];
+}
+
+function commandPollUrl(transport, hostId) {
+  const url = new URL("/api/commands", transport.baseUrl);
+  url.searchParams.set("hostId", hostId);
+  url.searchParams.set("commandRefs", DAEMON_COMMAND_REFS.join(","));
+  return url;
+}
+
+function commandUrl(transport, commandId, action = "") {
+  const safeId = encodeURIComponent(String(commandId ?? ""));
+  return new URL(`/api/commands/${safeId}${action ? `/${action}` : ""}`, transport.baseUrl);
+}
+
 class RemoteRouter {
   constructor(config, adapters) {
     this.config = config;
     this.adapters = adapters;
     this.timer = null;
     this.polling = false;
+    this.hostId = daemonHostId(config);
+    this.lastHostHeartbeatByTransport = new Map();
+    this.lastCommandPollByTransport = new Map();
   }
 
   start() {
@@ -515,6 +566,8 @@ class RemoteRouter {
         const messages = [];
         const relays = relayTransports(this.config);
         for (const transport of relays) {
+          await this.registerRelayHostIfDue(transport);
+          await this.pollRelayCommandsIfDue(transport);
           messages.push(...await this.pollRelay(transport));
         }
         if (relays.length === 0) {
@@ -534,6 +587,150 @@ class RemoteRouter {
     };
     this.timer = setInterval(() => void tick(), intervalMs);
     void tick();
+  }
+
+  relayHeaders(transport) {
+    return transport.secret ? { "x-legax-secret": transport.secret } : {};
+  }
+
+  async registerRelayHostIfDue(transport) {
+    const intervalMs = nonNegativeNumber(this.config.daemon?.hostHeartbeatIntervalMs, 10000);
+    const now = Date.now();
+    const key = transportKey(transport);
+    const last = this.lastHostHeartbeatByTransport.get(key) ?? 0;
+    if (last && now - last < intervalMs) return;
+    this.lastHostHeartbeatByTransport.set(key, now);
+    try {
+      await httpJson(new URL("/api/hosts", transport.baseUrl), {
+        method: "POST",
+        headers: this.relayHeaders(transport),
+        body: JSON.stringify({
+          hostId: this.hostId,
+          displayName: this.config.displayName ?? "Desktop Agent",
+          version: packageVersion(),
+          capabilities: {
+            platform: process.platform,
+            arch: process.arch,
+            commandQueue: true
+          },
+          adapters: this.adapters.map((adapter) => ({
+            agentId: adapter.agentId,
+            agentLabel: adapter.agentLabel,
+            key: adapter.key,
+            name: adapter.name,
+            cliBackend: adapter.cliBackend,
+            autoStart: adapter.autoStart !== false,
+            mode: adapter.mode
+          })),
+          commandRefs: DAEMON_COMMAND_REFS,
+          groups: daemonHostGroups(this.config),
+          ttlMs: nonNegativeNumber(this.config.daemon?.hostHeartbeatTtlMs, 30000)
+        })
+      }, Number(transport.timeoutMs ?? 15000));
+    } catch (error) {
+      process.stderr.write(`[legax] relay host heartbeat failed via ${transport.name ?? "relay"}: ${error.message}\n`);
+    }
+  }
+
+  async pollRelayCommandsIfDue(transport) {
+    const intervalMs = nonNegativeNumber(this.config.daemon?.commandPollIntervalMs, 1000);
+    const now = Date.now();
+    const key = transportKey(transport);
+    const last = this.lastCommandPollByTransport.get(key) ?? 0;
+    if (last && now - last < intervalMs) return;
+    this.lastCommandPollByTransport.set(key, now);
+    let response;
+    try {
+      response = await httpJson(commandPollUrl(transport, this.hostId), {
+        headers: this.relayHeaders(transport)
+      }, Number(transport.timeoutMs ?? 15000));
+    } catch (error) {
+      process.stderr.write(`[legax] relay command poll failed via ${transport.name ?? "relay"}: ${error.message}\n`);
+      return;
+    }
+
+    for (const command of response.commands ?? []) {
+      await this.runRelayCommand(transport, command);
+    }
+  }
+
+  async runRelayCommand(transport, command) {
+    let claimed = null;
+    try {
+      const response = await httpJson(commandUrl(transport, command.id, "claim"), {
+        method: "POST",
+        headers: this.relayHeaders(transport),
+        body: JSON.stringify({
+          hostId: this.hostId,
+          commandRefs: DAEMON_COMMAND_REFS,
+          claimTtlMs: nonNegativeNumber(this.config.daemon?.commandClaimTtlMs, 30000)
+        })
+      }, Number(transport.timeoutMs ?? 15000));
+      claimed = response.command;
+    } catch (error) {
+      process.stderr.write(`[legax] relay command claim failed for ${command.id}: ${error.message}\n`);
+      return;
+    }
+
+    try {
+      const result = await this.executeRelayCommand(claimed);
+      await this.reportRelayCommand(transport, claimed, {
+        state: "succeeded",
+        result
+      });
+    } catch (error) {
+      await this.reportRelayCommand(transport, claimed, {
+        state: "failed",
+        error: { message: error.message }
+      });
+    }
+  }
+
+  async executeRelayCommand(command) {
+    if (command.commandRef === "legax.ping") {
+      return {
+        pong: true,
+        hostId: this.hostId,
+        payload: command.payload ?? {}
+      };
+    }
+    if (command.commandRef === "agent.list") {
+      return {
+        hostId: this.hostId,
+        agents: this.adapters.map((adapter) => ({
+          agentId: adapter.agentId,
+          agentLabel: adapter.agentLabel,
+          key: adapter.key,
+          name: adapter.name,
+          mode: adapter.mode,
+          cliBackend: adapter.cliBackend,
+          autoStart: adapter.autoStart !== false
+        }))
+      };
+    }
+    if (command.commandRef === "legax.daemon.status") {
+      return {
+        hostId: this.hostId,
+        ...statusPayload(this.config)
+      };
+    }
+    throw new Error(`unsupported relay commandRef: ${command.commandRef}`);
+  }
+
+  async reportRelayCommand(transport, command, body) {
+    try {
+      await httpJson(commandUrl(transport, command.id, "result"), {
+        method: "POST",
+        headers: this.relayHeaders(transport),
+        body: JSON.stringify({
+          hostId: this.hostId,
+          claimToken: command.claimToken,
+          ...body
+        })
+      }, Number(transport.timeoutMs ?? 15000));
+    } catch (error) {
+      process.stderr.write(`[legax] relay command result failed for ${command.id}: ${error.message}\n`);
+    }
   }
 
   async pollRelay(transport) {
