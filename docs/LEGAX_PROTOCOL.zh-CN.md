@@ -73,6 +73,73 @@ relay 浏览器配对返回协议化 offer：
 
 `POST /api/attention/ack` 接收 `{ "sessionId": "...", "ids": ["..."] }`，并仅为当前已配对浏览器设备隐藏这些事项。
 
+## Portable Sessions 与 Leases
+
+relay 拥有的 portable sessions 使用以下桌面鉴权接口：
+
+- `POST /api/sessions`：创建或更新稳定 relay session。
+- `GET /api/sessions/:id`：读取 session，并在存在时返回当前 generation 和 active lease。
+- `POST /api/generations`：创建 generation，并把它设为 session 的当前 generation。
+- `GET /api/generations/:id`：读取 generation。
+- `POST /api/generations/:id/update`：修改受 lease 保护的 generation 字段。必须携带当前 `hostId`、`fencingToken` 和 `leaseToken`。
+- `POST /api/generations/:id/fork`：从父 generation checkpoint 创建子 generation，且不修改父 generation。必须携带当前 lease 凭据。
+- `POST /api/leases/claim`：claim 一个 generation 的 active execution ownership。
+- `GET /api/leases/:id`：读取 lease，并刷新过期状态。
+- `POST /api/leases/:id/renew`：延长 active lease。必须携带当前 lease 凭据。
+- `POST /api/leases/:id/release`：释放 active lease。必须携带当前 lease 凭据。
+- `POST /api/handoffs`：创建 handoff 记录。
+- `GET /api/handoffs/:id`：读取 handoff 记录。
+- `POST /api/handoffs/:id/transition`：按文档化状态序列推进 handoff。
+
+受 lease 保护的写入使用两层 fence。`fencingToken` 在每个 generation 内单调递增，用于在 reclaim 后拒绝旧 owner。`leaseToken` 是返回给 active holder 的不透明 secret。过期 host、过期 fencing token 或过期 lease token 都会返回 `409`，且不会修改 generation。
+
+handoff transition 顺序为：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。`checkpointed` transition 可以包含 `artifactId`，用于告诉接收 host 应该拉取哪个加密 checkpoint。fork 保持父 generation 不变，并通过 `baseGenerationId` 关联子 generation；创建 fork 时也可以通过子 generation 的 `checkpoint.artifactId` 携带 `artifactId`。
+
+## Checkpoint Artifacts
+
+checkpoint bundle 使用 `legax.checkpoint/1` schema。daemon 在本地创建 bundle，过滤不安全文件，用 AES-256-GCM 加密 JSON payload，并通过 X25519、HKDF-SHA256 和 AES-256-GCM 为已授权 daemon device 包装每个 artifact 的 data key。relay 不接收明文文件内容。
+
+桌面鉴权 artifact API：
+
+- `POST /api/artifacts`：保存加密 checkpoint artifact 记录。请求中如果包含 `plaintext`、`bundle`、`payload`、`files` 或 `content` 等明文字段，会被拒绝。
+- `GET /api/artifacts/:id`：读取加密 artifact metadata、ciphertext 和 wrapped keys。
+
+本地 bundle 创建默认排除 credential 文件、private key、database 文件、symlink、binary 文件、超大文件、绝对路径和路径穿越。restore 写入前会校验每个路径，拒绝 symlink escape，校验内容 hash，并且在调用方没有显式启用覆盖时拒绝覆盖有冲突的本地文件。device revoke 会阻止后续继续为该 device 包装 key；已经为该 key 包装过的历史 artifact 仍遵循既有信任模型，持有匹配 private key 的一方仍可读取。
+
+## Restricted Workflows
+
+workflow definition 使用 `legax.workflow/1` schema。relay 会在保存前校验 definition：step id 必须唯一，`needs` 必须组成 DAG，`uses` 必须引用已知内置 action，且会拒绝 `shell`、`script`、`eval`、`prompt`、`command` 和自由参数等字段。definition 描述 metadata、带默认值的 typed inputs、steps、gate policy、retry/timeout policy、artifact 引用和完成所需 evidence。
+
+桌面鉴权 workflow API：
+
+- `POST /api/workflow-definitions`：校验并注册受限 workflow definition。
+- `GET /api/workflow-definitions/:id`：读取 definition。
+- `POST /api/workflow-runs`：从已注册 definition 创建 run，并调度 ready step。
+- `GET /api/workflow-runs/:id`：读取 run，并刷新 timeout。
+- `POST /api/workflow-runs/:id/steps/:stepId/result`：记录幂等 step 结果，在 policy 允许时 retry，并调度依赖 step。
+- `POST /api/workflow-runs/:id/gates/:stepId`：批准或拒绝等待中的 gate。
+- `POST /api/workflow-runs/:id/cancel`：取消尚未进入 terminal 状态的 run。
+
+relay 永远不直接执行 workflow action。ready step 会创建 relay command，并把 step 的 `uses` 值作为 `commandRef`；daemon host 只有在本地 allowlist 包含该 command ref 时才能 claim。gate 等待会保存为 transport-neutral 的 `workflow_gate` inbox item，并通过 gate endpoint 恢复。
+
+内置 LPS TDD action contract 可通过 `GET /api/workflow-actions` 获取。每个 contract 都声明必需输入、必需输出、必需 evidence、是否可能修改 workspace，以及对应的 policy gate。初始 action set 包括：
+
+- `requirements.capture`
+- `design.basic`
+- `design.detail`
+- `test.spec`
+- `tdd.red`
+- `tdd.review_red`
+- `tdd.green`
+- `tdd.review_green`
+- `tdd.refactor`
+- `workflow.run_check`
+- `review.self`
+- `pr.prepare`
+- `pr.create`
+
+内置 workflow definition `lps-tdd` 会从需求捕获执行到 `pr.prepare`。它刻意不包含 `pr.create`；PR 创建默认禁用，使用时必须放在 before-gate 后面，并且即使启用也必须 draft-first。会修改 workspace 的 action（`tdd.red`、`tdd.green` 和 `tdd.refactor`）必须持有有效 generation lease。`workflow.run_check` 只接受已批准的 `checkRef`，绝不从 workflow definition 接收自由命令字符串。
+
 ## Worktree-Lite
 
 `legax worktree` 提供本地轻量工作树流程：

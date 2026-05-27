@@ -17,7 +17,7 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 - Daemon: supervises enabled CLI adapters, polls inbound transports, routes messages, and creates on-demand launch requests.
 - Adapter: owns one CLI process and one session model. It lists projects/sessions, starts or resumes sessions, sends text into the CLI, parses structured output, and mirrors native approval requests when the CLI exposes a supported callback.
 - Relay: stores events, inbound messages, pairing codes, paired devices, and audit entries for one or more `sessionId` values.
-- Telegram transport: formats outbound notifications and turns inbound messages or callback buttons into the same message model used by the relay.
+- Telegram transport: formats outbound notifications and, when relay is enabled, lets the relay turn inbound messages or callback buttons into the same message model used by the browser UI.
 - Feishu/Lark transport: formats outbound app-bot notifications and lets the relay turn event callbacks into the same message model used by the browser UI.
 - MCP server: exposes notification, polling, and permission tools. It never starts or stops CLI processes.
 
@@ -25,7 +25,7 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 
 - `config.yaml`: local operator configuration. It is the source for relay URL, relay secret, Telegram bot token, Feishu/Lark app credentials, webhook URLs, and adapter settings.
 - `data/runtime-state.json`: daemon and adapter coordination state. It stores cursors, selected sessions, modes, inbox queues, and launch requests. It is local runtime coordination, not portable relay session truth.
-- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
+- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
 - `data/mcp-state.json`: generic MCP tool state.
 - CLI-native history: Codex, Claude Code, Gemini, and OpenCode own their own session history. Legax reads or resumes it through each CLI's supported interface.
 
@@ -35,6 +35,36 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 
 - `POST /api/events`
 - `GET /api/messages`
+- `POST /api/sessions`
+- `GET /api/sessions/:id`
+- `POST /api/generations`
+- `GET /api/generations/:id`
+- `POST /api/generations/:id/update`
+- `POST /api/generations/:id/fork`
+- `POST /api/leases/claim`
+- `GET /api/leases/:id`
+- `POST /api/leases/:id/renew`
+- `POST /api/leases/:id/release`
+- `POST /api/handoffs`
+- `GET /api/handoffs/:id`
+- `POST /api/handoffs/:id/transition`
+- `POST /api/artifacts`
+- `GET /api/artifacts/:id`
+- `POST /api/workflow-definitions`
+- `GET /api/workflow-definitions/:id`
+- `GET /api/workflow-actions`
+- `POST /api/workflow-runs`
+- `GET /api/workflow-runs/:id`
+- `POST /api/workflow-runs/:id/steps/:stepId/result`
+- `POST /api/workflow-runs/:id/gates/:stepId`
+- `POST /api/workflow-runs/:id/cancel`
+- `POST /api/hosts`
+- `GET /api/hosts`
+- `POST /api/commands`
+- `GET /api/commands`
+- `GET /api/commands/:id`
+- `POST /api/commands/:id/claim`
+- `POST /api/commands/:id/result`
 - `POST /api/pairing-codes`
 - `GET /api/devices`
 - `DELETE /api/devices/:id`
@@ -100,11 +130,27 @@ Goal: centralize lifecycle and remote inbound routing.
 1. Operator starts `node scripts/legax-daemon.mjs` or the project daemon script.
 2. Daemon reads `config.yaml`, validates adapter contracts, and prints a redaction-safe transport summary.
 3. Daemon starts adapters with `autoStart: true`.
-4. Daemon polls relay `/api/messages` and Telegram `getUpdates`; Feishu/Lark callbacks enter the relay and then reuse `/api/messages`.
-5. Daemon routes inbound messages to per-agent inbox queues.
-6. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
+4. Relay owns Telegram `getUpdates` polling or `/api/telegram/events` webhooks and Feishu/Lark callbacks, then writes normalized actions into `/api/messages`.
+5. Daemon polls relay `/api/messages` and routes inbound messages to per-agent inbox queues.
+6. Daemon posts `/api/hosts` heartbeats with its host id, groups, enabled adapter metadata, and supported command refs.
+7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token. LPS TDD action commands are document/evidence oriented, never accept free-form shell strings from workflow definitions, and require a generation lease when the action may modify workspace files.
+8. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
-Completion: remote menu actions work even when a specific CLI adapter has not started yet.
+Completion: remote menu actions work even when a specific CLI adapter has not started yet, and the relay can observe daemon host liveness plus command queue progress.
+
+### 3A. Own Portable Session Execution
+
+Goal: keep the user-facing task identity portable across hosts while native CLI session ids remain adapter-specific metadata.
+
+1. Relay creates or updates a stable session through `POST /api/sessions`.
+2. Relay creates a generation through `POST /api/generations`. The generation records host, adapter, native CLI metadata, worktree metadata, checkpoint metadata, and result state.
+3. A daemon host claims execution ownership through `POST /api/leases/claim`.
+4. The lease holder renews or releases the lease with the current `hostId`, `fencingToken`, and `leaseToken`.
+5. Generation updates require the current lease holder. Stale fencing tokens return `409`.
+6. A handoff records `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`, or enters `failed`.
+7. A fork creates a child generation from a prior generation checkpoint without mutating the parent generation.
+
+Completion: the relay can show the portable session id, current generation, lease holder, handoff history, and fork lineage without treating native CLI ids as the primary identity.
 
 ### 4. Choose CLI, Project, and Session in the Relay Web Page
 
@@ -173,12 +219,14 @@ Goal: provide the same target-selection and action loop without requiring the br
 Primary button flow:
 
 1. User sends `/start`.
-2. Bot replies with enabled CLI buttons.
-3. User taps a CLI button. Daemon starts the adapter when needed and replies with project/chat buttons.
-4. User taps a project/chat button. Adapter replies with session buttons scoped to that project/chat. Archived sessions are excluded. Sessions without project metadata are shown under **Chats**; Claude cwd-only sessions are also available under **Chats**; Codex app-server sessions are shown under **Chats** unless explicit project metadata is present; OpenCode sessions use cwd/project metadata when the server returns it. If more than 10 sessions match, the reply includes **Previous** / **Next** page buttons.
-5. User taps a session button. Adapter marks it selected.
-6. User sends normal text. Daemon routes it to the selected CLI/session.
-7. Adapter sends completion, supported approval, and input-request notifications back through Telegram.
+2. Relay receives the Telegram update, validates the allowed chat, deduplicates it, normalizes it into `/api/messages`, and acknowledges callback queries when needed.
+3. Daemon routes the normalized message and posts status/menu events back to relay.
+4. Relay fans those events out through Telegram, so the bot replies with enabled CLI buttons.
+5. User taps a CLI button. Daemon starts the adapter when needed and replies with project/chat buttons through the same relay fan-out path.
+6. User taps a project/chat button. Adapter replies with session buttons scoped to that project/chat. Archived sessions are excluded. Sessions without project metadata are shown under **Chats**; Claude cwd-only sessions are also available under **Chats**; Codex app-server sessions are shown under **Chats** unless explicit project metadata is present; OpenCode sessions use cwd/project metadata when the server returns it. If more than 10 sessions match, the reply includes **Previous** / **Next** page buttons.
+7. User taps a session button. Adapter marks it selected.
+8. User sends normal text. Daemon routes it to the selected CLI/session.
+9. Adapter sends completion, supported approval, and input-request notifications back through relay-owned Telegram delivery.
 
 Supported command flow:
 
@@ -249,7 +297,7 @@ Completion: remote target selection and message send both work again.
 - Daemon owns process supervision, remote polling, on-demand launch, and cross-agent routing.
 - Adapters own CLI command lines, structured output parsing, session discovery, session selection, and native approval callbacks when available.
 - Relay owns HTTP auth, event/message queues, browser UI, protocol pairing offers, devices, attention inbox derivation, and audit.
-- Telegram transport owns Telegram API formatting and callback parsing. It does not own adapter lifecycle.
+- Relay-owned Telegram transport owns Telegram API formatting, polling/webhook ingress, callback parsing, callback acknowledgement, and event fan-out. It does not own adapter lifecycle.
 - Feishu/Lark transport owns app-bot formatting and relay event callback parsing. It does not own adapter lifecycle.
 - MCP owns tool capability exposure. It does not own daemon lifecycle or session selection.
 - `legax` CLI owns local bootstrap diagnostics and managed worktree helper commands.
@@ -262,10 +310,12 @@ Completion: remote target selection and message send both work again.
 - Pairing offers carry session/key/nonce metadata while keeping the desktop relay secret out of the browser.
 - The attention inbox can show and acknowledge approval, input, error, and completion items.
 - The relay web page can select CLI/project/session through the three clickable target segments.
-- Telegram can run `/start -> CLI -> project/chat -> session -> text -> response`.
+- Telegram can run `/start -> relay-normalized message -> CLI -> project/chat -> session -> text -> relay-owned response`.
 - Telegram Mini App can open a project picker only after relay HTTPS and daemon project-root preflight pass.
 - Feishu/Lark can send app-bot notifications and route text replies or approval card actions back through relay `/api/messages`.
 - Permission requests always require an explicit remote decision and return through the CLI's native callback when that adapter supports one.
 - User-input requests can be answered remotely and unblock the waiting operation.
 - Sleeping adapters can be launched on demand by daemon-owned remote actions.
+- Daemons register as relay hosts, become offline when their heartbeat expires, and execute only known relay command refs with claim-token result reporting. `pr.create` is optional, disabled by default, and must remain draft-first.
+- Portable sessions, generations, leases, handoffs, and forks live in relay state; stale fencing tokens cannot mutate active generations.
 - Offline and auth failures provide a clear next action.

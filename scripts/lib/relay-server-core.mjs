@@ -4,6 +4,22 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { readYaml } from "./yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./paths.mjs";
+import {
+  parseTelegramUpdate,
+  telegramApiUrl,
+  telegramTransportKey,
+  telegramUpdateChatId,
+  telegramUpdateId
+} from "./telegram-transport.mjs";
+import { sendTelegramEvent } from "./outbound-transports.mjs";
+import {
+  LPS_ACTION_IDS,
+  LPS_TDD_WORKFLOW_ID,
+  lpsActionById,
+  lpsActionContracts,
+  lpsDefaultWorkflowDefinition,
+  validateLpsActionResult
+} from "./lps-actions.mjs";
 
 function optionValue(args, name, fallback = "") {
   const prefix = `${name}=`;
@@ -34,18 +50,41 @@ let AUDIT_DISABLED = false;
 let AUDIT_LOG_PATH = "";
 let AUDIT_MAX_TAIL = 1000;
 let AUDIT_TEXT_PREVIEW = 80;
+let TELEGRAM_POLL_TIMERS = [];
+const TELEGRAM_ACTIVE_POLLS = new Set();
 
 const BROADCAST_TARGETS = new Set(["*", "all", "broadcast"]);
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const PAIRING_CODE_PATTERN = /^\d{6,8}$/;
+const RELAY_ID_PATTERN = /^[A-Za-z0-9._:/-]{1,160}$/;
 const DEVICE_COOKIE = "legax_device";
 const DEVICE_TOKEN_BYTES = 32;
 const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
+const HOST_HEARTBEAT_TTL_MS = 30_000;
+const COMMAND_TTL_MS = 5 * 60 * 1000;
+const COMMAND_CLAIM_TTL_MS = 30_000;
+const COMMAND_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired"]);
+const COMMAND_RESULT_STATES = new Set(["succeeded", "failed", "cancelled"]);
+const GENERATION_STATES = new Set(["created", "active", "running", "checkpointed", "succeeded", "failed", "cancelled", "handed_off", "forked", "closed"]);
+const LEASE_ACTIVE_STATES = new Set(["active"]);
+const HANDOFF_TRANSITIONS = ["requested", "checkpointed", "uploaded", "released", "claimed", "restored", "resumed"];
+const HANDOFF_TERMINAL_STATES = new Set(["resumed", "failed"]);
+const WORKFLOW_SCHEMA = "legax.workflow/1";
+const WORKFLOW_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired", "conflicted"]);
+const WORKFLOW_STEP_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired", "conflicted"]);
+const WORKFLOW_FORBIDDEN_FIELDS = new Set(["shell", "script", "eval", "javascript", "command", "commandString", "cmd", "args", "prompt", "promptTemplate"]);
+const WORKFLOW_BUILTIN_ACTIONS = new Set([
+  "legax.ping",
+  "agent.list",
+  "legax.daemon.status",
+  ...LPS_ACTION_IDS
+]);
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
   "generations",
   "leases",
+  "handoffs",
   "hosts",
   "devices",
   "transports",
@@ -216,6 +255,7 @@ function emptyRelayStore() {
     sessions: {},
     generations: {},
     leases: {},
+    handoffs: {},
     hosts: {},
     devices: {},
     transports: {},
@@ -242,9 +282,37 @@ function ensureSessionShape(session, sessionId) {
   if (!record.status || typeof record.status !== "string") record.status = "active";
   if (!record.createdAt || typeof record.createdAt !== "string") record.createdAt = now;
   if (!record.updatedAt || typeof record.updatedAt !== "string") record.updatedAt = record.createdAt;
+  if (record.title == null) record.title = "";
+  if (typeof record.title !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: title must be a string`);
+  }
+  if (record.selectedAgentId == null) record.selectedAgentId = "";
+  if (typeof record.selectedAgentId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: selectedAgentId must be a string`);
+  }
   if (record.currentGenerationId == null) record.currentGenerationId = "";
   if (typeof record.currentGenerationId !== "string") {
     throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: currentGenerationId must be a string`);
+  }
+  if (record.generationIds == null) record.generationIds = [];
+  if (!Array.isArray(record.generationIds)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: generationIds must be an array`);
+  }
+  if (record.handoffFromGenerationId == null) record.handoffFromGenerationId = "";
+  if (typeof record.handoffFromGenerationId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: handoffFromGenerationId must be a string`);
+  }
+  if (record.forkedFromGenerationId == null) record.forkedFromGenerationId = "";
+  if (typeof record.forkedFromGenerationId !== "string") {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: forkedFromGenerationId must be a string`);
+  }
+  if (record.transportBindings == null) record.transportBindings = {};
+  if (!isRecord(record.transportBindings)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: transportBindings must be an object`);
+  }
+  if (record.metadata == null) record.metadata = {};
+  if (!isRecord(record.metadata)) {
+    throw new Error(`invalid relay store session "${sessionId}" at ${STORE_PATH}: metadata must be an object`);
   }
   if (record.nativeSessions == null) record.nativeSessions = {};
   if (!isRecord(record.nativeSessions)) {
@@ -286,6 +354,34 @@ function appendRelayStoreEvent(store, kind, details = {}) {
     createdAt: new Date().toISOString(),
     ...details
   }, 1000);
+}
+
+async function httpJson(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...(options.body ? { "content-type": "application/json" } : {}),
+        ...(options.headers ?? {})
+      }
+    });
+    const text = await response.text();
+    let body = {};
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { text };
+      }
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function sleepSync(ms) {
@@ -710,9 +806,1627 @@ function normalizeMessage(body, sessionId, seq) {
   };
 }
 
+function relayHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function relayId(value, label, { required = true } = {}) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    if (!required) return "";
+    throw relayHttpError(400, `${label} is required`);
+  }
+  if (!RELAY_ID_PATTERN.test(text)) {
+    throw relayHttpError(400, `${label} contains unsupported characters`);
+  }
+  return text;
+}
+
+function relayString(value, fallback = "", max = 500) {
+  const text = String(value ?? fallback ?? "").trim();
+  return text.slice(0, max);
+}
+
+function relayStringList(value, max = 100) {
+  const items = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(",") : []);
+  const seen = new Set();
+  const normalized = [];
+  for (const item of items) {
+    const text = String(item ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    normalized.push(text.slice(0, 160));
+    if (normalized.length >= max) break;
+  }
+  return normalized;
+}
+
+function positiveInteger(value, fallback, { min = 1, max = 24 * 60 * 60 * 1000 } = {}) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function isoFromMs(ms) {
+  return new Date(ms).toISOString();
+}
+
+function parseTimestampMs(value) {
+  const parsed = Date.parse(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeHostAdapter(adapter) {
+  if (!isRecord(adapter)) return null;
+  const agentId = relayString(adapter.agentId ?? adapter.id ?? adapter.name, "", 160);
+  if (!agentId) return null;
+  return {
+    ...adapter,
+    agentId,
+    agentLabel: relayString(adapter.agentLabel ?? adapter.label ?? agentId, agentId, 160)
+  };
+}
+
+function relayHostStatus(host, nowMs = Date.now()) {
+  return parseTimestampMs(host?.expiresAt) > nowMs ? "online" : "offline";
+}
+
+function publicRelayHost(host, nowMs = Date.now()) {
+  return {
+    ...host,
+    status: relayHostStatus(host, nowMs)
+  };
+}
+
+function registerRelayHost(store, body) {
+  const hostId = relayId(body.hostId ?? body.id, "hostId");
+  const existing = store.hosts[hostId] ?? {};
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const ttlMs = positiveInteger(body.ttlMs ?? body.heartbeatTtlMs ?? existing.ttlMs, HOST_HEARTBEAT_TTL_MS);
+  const adapters = Object.prototype.hasOwnProperty.call(body, "adapters")
+    ? (Array.isArray(body.adapters) ? body.adapters.map(normalizeHostAdapter).filter(Boolean) : [])
+    : (Array.isArray(existing.adapters) ? existing.adapters : []);
+  const commandRefs = Object.prototype.hasOwnProperty.call(body, "commandRefs")
+    ? relayStringList(body.commandRefs)
+    : (Array.isArray(existing.commandRefs) ? existing.commandRefs : []);
+  const groups = Object.prototype.hasOwnProperty.call(body, "groups")
+    ? relayStringList(body.groups)
+    : (Array.isArray(existing.groups) ? existing.groups : []);
+  const host = {
+    ...existing,
+    id: hostId,
+    displayName: relayString(body.displayName ?? existing.displayName ?? hostId, hostId, 160),
+    version: relayString(body.version ?? existing.version ?? "", "", 80),
+    capabilities: isRecord(body.capabilities) ? body.capabilities : (isRecord(existing.capabilities) ? existing.capabilities : {}),
+    adapters,
+    commandRefs,
+    groups,
+    publicKey: body.publicKey === undefined
+      ? (existing.publicKey ?? null)
+      : (isRecord(body.publicKey) ? body.publicKey : null),
+    createdAt: existing.createdAt ?? now,
+    updatedAt: now,
+    lastSeenAt: now,
+    ttlMs,
+    expiresAt: isoFromMs(nowMs + ttlMs)
+  };
+  store.hosts[hostId] = host;
+  appendRelayStoreEvent(store, "host.heartbeat", {
+    hostId,
+    expiresAt: host.expiresAt
+  });
+  return host;
+}
+
+function commandIdFromBody(body) {
+  if (body.id !== undefined && body.id !== null && body.id !== "") {
+    return relayId(body.id, "command id");
+  }
+  return `cmd_${crypto.randomBytes(12).toString("base64url")}`;
+}
+
+function commandPayload(value) {
+  return value === undefined ? {} : value;
+}
+
+function findIdempotentCommand(store, idempotencyKey) {
+  if (!idempotencyKey) return null;
+  return Object.values(store.commands).find((command) => command?.idempotencyKey === idempotencyKey) ?? null;
+}
+
+function createRelayCommand(store, body) {
+  const idempotencyKey = relayString(body.idempotencyKey, "", 240);
+  const existing = findIdempotentCommand(store, idempotencyKey);
+  if (existing) {
+    refreshRelayCommand(existing);
+    return { command: existing, idempotent: true };
+  }
+
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const command = {
+    id: commandIdFromBody(body),
+    sessionId: safeSessionKey(body.sessionId),
+    commandRef: relayId(body.commandRef, "commandRef"),
+    state: "pending",
+    targetHostId: relayId(body.targetHostId, "targetHostId", { required: false }),
+    targetGroup: relayId(body.targetGroup, "targetGroup", { required: false }),
+    target: isRecord(body.target) ? body.target : {},
+    generationId: relayString(body.generationId, "", 160),
+    leaseToken: relayString(body.leaseToken, "", 240),
+    payload: commandPayload(body.payload),
+    idempotencyKey,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: body.expiresAt ? isoFromMs(parseTimestampMs(body.expiresAt)) : isoFromMs(nowMs + positiveInteger(body.ttlMs ?? body.expiresInMs, COMMAND_TTL_MS)),
+    maxAttempts: positiveInteger(body.maxAttempts, 1, { min: 1, max: 100 }),
+    attempts: 0,
+    claimedBy: "",
+    claimToken: "",
+    claimExpiresAt: "",
+    startedAt: "",
+    completedAt: "",
+    result: null,
+    error: null
+  };
+  store.commands[command.id] = command;
+  appendRelayStoreEvent(store, "command.created", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    targetHostId: command.targetHostId,
+    targetGroup: command.targetGroup
+  });
+  return { command, idempotent: false };
+}
+
+function refreshRelayCommand(command, nowMs = Date.now()) {
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return false;
+  const now = isoFromMs(nowMs);
+  if (parseTimestampMs(command.expiresAt) <= nowMs) {
+    command.state = "expired";
+    command.updatedAt = now;
+    command.completedAt = command.completedAt || now;
+    command.error ??= { code: "expired", message: "command expired before completion" };
+    return true;
+  }
+  if (command.state === "running" && command.claimExpiresAt && parseTimestampMs(command.claimExpiresAt) <= nowMs) {
+    const attempts = Number(command.attempts ?? 0);
+    const maxAttempts = Number(command.maxAttempts ?? 1);
+    command.updatedAt = now;
+    if (attempts >= maxAttempts) {
+      command.state = "failed";
+      command.completedAt = now;
+      command.error = { code: "claim_timeout", message: "command claim expired" };
+    } else {
+      command.state = "pending";
+      command.claimedBy = "";
+      command.claimToken = "";
+      command.claimExpiresAt = "";
+    }
+    return true;
+  }
+  return false;
+}
+
+function refreshRelayCommands(store) {
+  let changed = false;
+  for (const command of Object.values(store.commands)) {
+    changed = refreshRelayCommand(command) || changed;
+  }
+  return changed;
+}
+
+function relayHostCanRunCommand(store, command, hostId, commandRefs = []) {
+  const host = store.hosts[hostId];
+  if (!host || relayHostStatus(host) !== "online") return false;
+  const allowedRefs = new Set(Array.isArray(host.commandRefs) ? host.commandRefs : []);
+  if (!allowedRefs.has(command.commandRef)) return false;
+  if (commandRefs.length > 0 && !commandRefs.includes(command.commandRef)) return false;
+  if (command.targetHostId && command.targetHostId !== hostId) return false;
+  if (command.targetGroup) {
+    const groups = Array.isArray(host.groups) ? host.groups : [];
+    if (!groups.includes(command.targetGroup)) return false;
+  }
+  return true;
+}
+
+function eligibleRelayCommands(store, url) {
+  refreshRelayCommands(store);
+  const hostId = relayId(url.searchParams.get("hostId"), "hostId");
+  const commandRefs = relayStringList(url.searchParams.get("commandRefs"));
+  const limit = positiveInteger(url.searchParams.get("limit"), 20, { min: 1, max: 100 });
+  return Object.values(store.commands)
+    .filter((command) => command.state === "pending")
+    .filter((command) => relayHostCanRunCommand(store, command, hostId, commandRefs))
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
+    .slice(0, limit);
+}
+
+function claimRelayCommand(store, commandId, body) {
+  const command = store.commands[commandId];
+  if (!command) throw relayHttpError(404, "command not found");
+  refreshRelayCommand(command);
+  const hostId = relayId(body.hostId, "hostId");
+  const commandRefs = relayStringList(body.commandRefs);
+  if (command.state !== "pending") throw relayHttpError(409, `command is ${command.state}`);
+  if (!relayHostCanRunCommand(store, command, hostId, commandRefs)) {
+    throw relayHttpError(403, "host is not eligible for command");
+  }
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  command.state = "running";
+  command.claimedBy = hostId;
+  command.claimToken = `claim_${crypto.randomBytes(16).toString("base64url")}`;
+  command.claimExpiresAt = isoFromMs(nowMs + positiveInteger(body.claimTtlMs, COMMAND_CLAIM_TTL_MS));
+  command.startedAt = command.startedAt || now;
+  command.updatedAt = now;
+  command.attempts = Number(command.attempts ?? 0) + 1;
+  appendRelayStoreEvent(store, "command.claimed", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    hostId
+  });
+  return command;
+}
+
+function completeRelayCommand(store, commandId, body) {
+  const command = store.commands[commandId];
+  if (!command) throw relayHttpError(404, "command not found");
+  refreshRelayCommand(command);
+  const hostId = relayId(body.hostId, "hostId");
+  const claimToken = relayString(body.claimToken, "", 240);
+  if (COMMAND_TERMINAL_STATES.has(command.state)) {
+    if (command.claimedBy === hostId && command.claimToken === claimToken) {
+      return { command, idempotent: true };
+    }
+    throw relayHttpError(409, `command is ${command.state}`);
+  }
+  if (command.state !== "running") throw relayHttpError(409, `command is ${command.state}`);
+  if (command.claimedBy !== hostId || command.claimToken !== claimToken) {
+    throw relayHttpError(409, "stale command result");
+  }
+  if (command.leaseToken && relayString(body.leaseToken, "", 240) !== command.leaseToken) {
+    throw relayHttpError(409, "stale command lease token");
+  }
+  const state = relayString(body.state ?? body.status, "", 40);
+  if (!COMMAND_RESULT_STATES.has(state)) {
+    throw relayHttpError(400, "result state must be succeeded, failed, or cancelled");
+  }
+  const now = new Date().toISOString();
+  command.state = state;
+  command.updatedAt = now;
+  command.completedAt = now;
+  command.result = body.result === undefined ? null : body.result;
+  command.error = body.error === undefined
+    ? null
+    : (isRecord(body.error) ? body.error : { message: String(body.error) });
+  appendRelayStoreEvent(store, "command.completed", {
+    commandId: command.id,
+    commandRef: command.commandRef,
+    hostId,
+    state
+  });
+  return { command, idempotent: false };
+}
+
+function generatedRelayId(prefix) {
+  return `${prefix}_${crypto.randomBytes(12).toString("base64url")}`;
+}
+
+function portableSessionId(value, { required = true, generate = false } = {}) {
+  const text = String(value ?? "").trim();
+  if (!text && generate) return generatedRelayId("sess").slice(0, 64);
+  if (!text) {
+    if (!required) return "";
+    throw relayHttpError(400, "sessionId is required");
+  }
+  if (!isValidSessionId(text)) throw relayHttpError(400, "sessionId contains unsupported characters");
+  return text;
+}
+
+function portableRecord(value) {
+  return isRecord(value) ? value : {};
+}
+
+function appendUnique(list, value) {
+  if (!list.includes(value)) list.push(value);
+}
+
+function createPortableSession(store, body) {
+  const sessionId = portableSessionId(body.sessionId ?? body.id, { generate: true });
+  const [, session] = getSession(store, sessionId);
+  const now = new Date().toISOString();
+  session.status = relayString(body.status ?? session.status ?? "active", "active", 80);
+  session.title = relayString(body.title ?? session.title ?? "", "", 200);
+  session.selectedAgentId = relayString(body.selectedAgentId ?? body.agentId ?? session.selectedAgentId ?? "", "", 160);
+  session.transportBindings = Object.prototype.hasOwnProperty.call(body, "transportBindings")
+    ? portableRecord(body.transportBindings)
+    : portableRecord(session.transportBindings);
+  session.metadata = {
+    ...portableRecord(session.metadata),
+    ...portableRecord(body.metadata)
+  };
+  session.updatedAt = now;
+  appendRelayStoreEvent(store, "session.upserted", { sessionId });
+  return session;
+}
+
+function publicPortableSession(store, session) {
+  const currentGeneration = session.currentGenerationId ? store.generations[session.currentGenerationId] ?? null : null;
+  const activeLease = currentGeneration ? activeLeaseForGeneration(store, currentGeneration.id) : null;
+  return { session, currentGeneration, activeLease };
+}
+
+function createPortableGeneration(store, body, { baseGenerationId = "" } = {}) {
+  const sessionId = portableSessionId(body.sessionId);
+  const [, session] = getSession(store, sessionId);
+  const generationId = body.generationId || body.id
+    ? relayId(body.generationId ?? body.id, "generationId")
+    : generatedRelayId("gen");
+  if (store.generations[generationId]) throw relayHttpError(409, "generation already exists");
+  if (baseGenerationId && !store.generations[baseGenerationId]) {
+    throw relayHttpError(404, "base generation not found");
+  }
+  const now = new Date().toISOString();
+  const adapterId = relayString(body.adapterId ?? body.agentId ?? "", "", 160);
+  const generation = {
+    id: generationId,
+    sessionId,
+    baseGenerationId: relayString(baseGenerationId || body.baseGenerationId || body.parentGenerationId || "", "", 160),
+    hostId: relayId(body.hostId, "hostId", { required: false }),
+    adapterId,
+    agentId: adapterId,
+    nativeSession: portableRecord(body.nativeSession ?? body.native),
+    worktree: portableRecord(body.worktree),
+    checkpoint: portableRecord(body.checkpoint),
+    state: GENERATION_STATES.has(body.state) ? body.state : "created",
+    result: body.result ?? null,
+    error: body.error ?? null,
+    leaseId: "",
+    leaseIds: [],
+    createdAt: now,
+    updatedAt: now
+  };
+  store.generations[generationId] = generation;
+  appendUnique(session.generationIds, generationId);
+  session.currentGenerationId = generationId;
+  session.selectedAgentId = session.selectedAgentId || adapterId;
+  if (adapterId && Object.keys(generation.nativeSession).length > 0) {
+    session.nativeSessions[adapterId] = {
+      generationId,
+      nativeSession: generation.nativeSession
+    };
+  }
+  session.updatedAt = now;
+  appendRelayStoreEvent(store, "generation.created", {
+    sessionId,
+    generationId,
+    baseGenerationId: generation.baseGenerationId,
+    hostId: generation.hostId,
+    adapterId
+  });
+  return generation;
+}
+
+function refreshPortableLease(store, lease, nowMs = Date.now()) {
+  if (!lease || !LEASE_ACTIVE_STATES.has(lease.state)) return false;
+  if (parseTimestampMs(lease.expiresAt) > nowMs) return false;
+  const now = isoFromMs(nowMs);
+  lease.state = "expired";
+  lease.expiredAt = lease.expiredAt || now;
+  lease.updatedAt = now;
+  const generation = store.generations[lease.generationId];
+  if (generation?.leaseId === lease.id) {
+    generation.leaseId = "";
+    generation.updatedAt = now;
+  }
+  appendRelayStoreEvent(store, "lease.expired", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId: lease.id,
+    hostId: lease.hostId
+  });
+  return true;
+}
+
+function refreshPortableLeasesForGeneration(store, generationId) {
+  let changed = false;
+  for (const lease of leasesForGeneration(store, generationId)) {
+    changed = refreshPortableLease(store, lease) || changed;
+  }
+  return changed;
+}
+
+function leasesForGeneration(store, generationId) {
+  const generation = store.generations[generationId];
+  let leases = [];
+  if (generation && Array.isArray(generation.leaseIds)) {
+    leases = generation.leaseIds
+      .map((leaseId) => store.leases[leaseId])
+      .filter((lease) => lease?.generationId === generationId);
+  } else {
+    leases = Object.values(store.leases).filter((lease) => lease.generationId === generationId);
+    if (generation) generation.leaseIds = leases.map((lease) => lease.id);
+  }
+  return leases
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
+}
+
+function activeLeaseForGeneration(store, generationId) {
+  refreshPortableLeasesForGeneration(store, generationId);
+  return leasesForGeneration(store, generationId).find((lease) => lease.state === "active") ?? null;
+}
+
+function latestLeaseForGeneration(store, generationId) {
+  refreshPortableLeasesForGeneration(store, generationId);
+  return leasesForGeneration(store, generationId).at(-1) ?? null;
+}
+
+function nextFencingToken(store, generationId) {
+  return leasesForGeneration(store, generationId).reduce((max, lease) => {
+    const value = Number(lease.fencingToken ?? 0);
+    return Number.isFinite(value) && value > max ? value : max;
+  }, 0) + 1;
+}
+
+function claimPortableLease(store, body) {
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId");
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  if (generation.sessionId !== sessionId) throw relayHttpError(409, "generation does not belong to session");
+  const active = activeLeaseForGeneration(store, generationId);
+  if (active) throw relayHttpError(409, "generation already has an active lease");
+  const latest = latestLeaseForGeneration(store, generationId);
+  const reclaimingExpired = latest?.state === "expired";
+  if (reclaimingExpired && body.reclaimExpired !== true) {
+    throw relayHttpError(409, "expired lease requires explicit reclaim");
+  }
+  if (reclaimingExpired) {
+    latest.state = "reclaimed";
+    latest.reclaimedAt = new Date().toISOString();
+    latest.updatedAt = latest.reclaimedAt;
+  }
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  const lease = {
+    id: generatedRelayId("lease"),
+    sessionId,
+    generationId,
+    hostId: relayId(body.hostId, "hostId"),
+    adapterId: relayString(body.adapterId ?? generation.adapterId ?? "", "", 160),
+    state: "active",
+    fencingToken: nextFencingToken(store, generationId),
+    token: `lease_${crypto.randomBytes(18).toString("base64url")}`,
+    createdAt: now,
+    updatedAt: now,
+    renewedAt: now,
+    expiresAt: isoFromMs(nowMs + positiveInteger(body.ttlMs, COMMAND_CLAIM_TTL_MS)),
+    releasedAt: "",
+    expiredAt: "",
+    reclaimedAt: ""
+  };
+  store.leases[lease.id] = lease;
+  if (!Array.isArray(generation.leaseIds)) generation.leaseIds = [];
+  appendUnique(generation.leaseIds, lease.id);
+  generation.leaseId = lease.id;
+  generation.hostId = lease.hostId;
+  generation.updatedAt = now;
+  appendRelayStoreEvent(store, reclaimingExpired ? "lease.reclaimed" : "lease.claimed", {
+    sessionId,
+    generationId,
+    leaseId: lease.id,
+    hostId: lease.hostId,
+    fencingToken: lease.fencingToken
+  });
+  return lease;
+}
+
+function requireCurrentLease(store, generationId, body, { requireToken = true } = {}) {
+  const lease = activeLeaseForGeneration(store, generationId);
+  if (!lease) throw relayHttpError(409, "generation has no active lease");
+  const hostId = relayString(body.leaseHostId ?? body.hostId, "", 160);
+  if (hostId !== lease.hostId) throw relayHttpError(409, "stale lease host");
+  if (Number(body.fencingToken) !== Number(lease.fencingToken)) {
+    throw relayHttpError(409, "stale fencing token");
+  }
+  const providedToken = relayString(body.leaseToken ?? body.token, "", 240);
+  if (requireToken && providedToken !== lease.token) {
+    throw relayHttpError(409, "stale lease token");
+  }
+  if (!requireToken && providedToken && providedToken !== lease.token) {
+    throw relayHttpError(409, "stale lease token");
+  }
+  return lease;
+}
+
+function renewPortableLease(store, leaseId, body) {
+  const lease = store.leases[leaseId];
+  if (!lease) throw relayHttpError(404, "lease not found");
+  refreshPortableLease(store, lease);
+  if (lease.state !== "active") throw relayHttpError(409, `lease is ${lease.state}`);
+  requireCurrentLease(store, lease.generationId, {
+    ...body,
+    hostId: body.hostId ?? lease.hostId
+  });
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  lease.updatedAt = now;
+  lease.renewedAt = now;
+  lease.expiresAt = isoFromMs(nowMs + positiveInteger(body.ttlMs, COMMAND_CLAIM_TTL_MS));
+  appendRelayStoreEvent(store, "lease.renewed", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId,
+    hostId: lease.hostId
+  });
+  return lease;
+}
+
+function releasePortableLease(store, leaseId, body) {
+  const lease = store.leases[leaseId];
+  if (!lease) throw relayHttpError(404, "lease not found");
+  refreshPortableLease(store, lease);
+  if (lease.state !== "active") throw relayHttpError(409, `lease is ${lease.state}`);
+  requireCurrentLease(store, lease.generationId, {
+    ...body,
+    hostId: body.hostId ?? lease.hostId
+  });
+  const now = new Date().toISOString();
+  lease.state = "released";
+  lease.releasedAt = now;
+  lease.updatedAt = now;
+  const generation = store.generations[lease.generationId];
+  if (generation?.leaseId === lease.id) {
+    generation.leaseId = "";
+    generation.updatedAt = now;
+  }
+  appendRelayStoreEvent(store, "lease.released", {
+    sessionId: lease.sessionId,
+    generationId: lease.generationId,
+    leaseId,
+    hostId: lease.hostId
+  });
+  return lease;
+}
+
+function updatePortableGeneration(store, generationId, body) {
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  requireCurrentLease(store, generationId, body);
+  const now = new Date().toISOString();
+  if (body.state !== undefined) {
+    const state = relayString(body.state, "", 80);
+    if (!GENERATION_STATES.has(state)) throw relayHttpError(400, "invalid generation state");
+    generation.state = state;
+  }
+  if (body.checkpoint !== undefined) generation.checkpoint = portableRecord(body.checkpoint);
+  if (body.worktree !== undefined) generation.worktree = portableRecord(body.worktree);
+  if (body.nativeSession !== undefined || body.native !== undefined) {
+    generation.nativeSession = portableRecord(body.nativeSession ?? body.native);
+  }
+  if (body.result !== undefined) generation.result = body.result;
+  if (body.error !== undefined) generation.error = body.error;
+  generation.updatedAt = now;
+  appendRelayStoreEvent(store, "generation.updated", {
+    sessionId: generation.sessionId,
+    generationId,
+    state: generation.state
+  });
+  return generation;
+}
+
+function forkPortableGeneration(store, baseGenerationId, body) {
+  const base = store.generations[baseGenerationId];
+  if (!base) throw relayHttpError(404, "base generation not found");
+  requireCurrentLease(store, baseGenerationId, body);
+  const checkpoint = portableRecord(body.checkpoint ?? base.checkpoint ?? {});
+  const artifactId = relayId(body.artifactId ?? checkpoint.artifactId, "artifactId", { required: false });
+  if (artifactId) checkpoint.artifactId = artifactId;
+  const generation = createPortableGeneration(store, {
+    sessionId: base.sessionId,
+    hostId: body.hostId,
+    adapterId: body.adapterId ?? base.adapterId,
+    nativeSession: body.nativeSession ?? {},
+    worktree: body.worktree ?? base.worktree ?? {},
+    checkpoint,
+    state: body.state ?? "created"
+  }, { baseGenerationId });
+  appendRelayStoreEvent(store, "generation.forked", {
+    sessionId: base.sessionId,
+    generationId: generation.id,
+    baseGenerationId,
+    artifactId
+  });
+  return generation;
+}
+
+function createPortableHandoff(store, body) {
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId");
+  const generation = store.generations[generationId];
+  if (!generation) throw relayHttpError(404, "generation not found");
+  if (generation.sessionId !== sessionId) throw relayHttpError(409, "generation does not belong to session");
+  const now = new Date().toISOString();
+  const handoff = {
+    id: generatedRelayId("handoff"),
+    sessionId,
+    generationId,
+    fromHostId: relayId(body.fromHostId, "fromHostId", { required: false }),
+    toHostId: relayId(body.toHostId, "toHostId"),
+    checkpointArtifactId: relayId(body.artifactId ?? body.checkpointArtifactId, "artifactId", { required: false }),
+    artifactIds: [],
+    state: "requested",
+    transitions: [{ state: "requested", at: now }],
+    error: null,
+    createdAt: now,
+    updatedAt: now
+  };
+  if (handoff.checkpointArtifactId) handoff.artifactIds.push(handoff.checkpointArtifactId);
+  store.handoffs[handoff.id] = handoff;
+  appendRelayStoreEvent(store, "handoff.requested", {
+    sessionId,
+    generationId,
+    handoffId: handoff.id,
+    fromHostId: handoff.fromHostId,
+    toHostId: handoff.toHostId
+  });
+  return handoff;
+}
+
+function transitionPortableHandoff(store, handoffId, body) {
+  const handoff = store.handoffs[handoffId];
+  if (!handoff) throw relayHttpError(404, "handoff not found");
+  const nextState = relayString(body.state, "", 80);
+  if (handoff.state === nextState) return handoff;
+  if (HANDOFF_TERMINAL_STATES.has(handoff.state)) {
+    throw relayHttpError(409, "handoff is terminal");
+  }
+  const currentIndex = HANDOFF_TRANSITIONS.indexOf(handoff.state);
+  const nextIndex = HANDOFF_TRANSITIONS.indexOf(nextState);
+  if (nextState === "failed") {
+    // Failure is terminal from any non-resumed state.
+  } else if (nextIndex < 0 || nextIndex !== currentIndex + 1) {
+    throw relayHttpError(409, "invalid handoff transition");
+  }
+  const now = new Date().toISOString();
+  handoff.state = nextState;
+  handoff.updatedAt = now;
+  if (nextState === "failed") handoff.error = body.error ?? { message: "handoff failed" };
+  const artifactId = relayId(body.artifactId ?? body.checkpointArtifactId, "artifactId", { required: false });
+  if (artifactId) {
+    if (!Array.isArray(handoff.artifactIds)) handoff.artifactIds = [];
+    appendUnique(handoff.artifactIds, artifactId);
+    if (nextState === "checkpointed") handoff.checkpointArtifactId = artifactId;
+  }
+  handoff.transitions.push({ state: nextState, at: now });
+  appendRelayStoreEvent(store, `handoff.${nextState}`, {
+    sessionId: handoff.sessionId,
+    generationId: handoff.generationId,
+    handoffId,
+    artifactId
+  });
+  return handoff;
+}
+
+function rejectPlaintextArtifactFields(body) {
+  const metadataField = forbiddenArtifactMetadataField(body);
+  if (metadataField) {
+    throw relayHttpError(400, `artifact metadata contains plaintext-like field ${metadataField}`);
+  }
+}
+
+function forbiddenArtifactMetadataField(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = forbiddenArtifactMetadataField(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (!isRecord(value)) return "";
+  for (const [key, child] of Object.entries(value)) {
+    if (["plaintext", "plainText", "bundle", "payload", "files", "content"].includes(key)) return key;
+    const found = forbiddenArtifactMetadataField(child);
+    if (found) return found;
+  }
+  return "";
+}
+
+function artifactCiphertextRecord(value) {
+  if (!isRecord(value)) throw relayHttpError(400, "artifact ciphertext is required");
+  const algorithm = relayString(value.algorithm, "", 80);
+  const ciphertext = relayString(value.ciphertext, "", MAX_REQUEST_BODY_BYTES);
+  if (!algorithm || !ciphertext) throw relayHttpError(400, "artifact ciphertext requires algorithm and ciphertext");
+  return {
+    algorithm,
+    iv: relayString(value.iv, "", 500),
+    tag: relayString(value.tag, "", 500),
+    ciphertext,
+    size: Number.isFinite(Number(value.size)) ? Number(value.size) : undefined,
+    sha256: relayString(value.sha256, "", 200)
+  };
+}
+
+function artifactWrappedKeyRecord(value) {
+  if (!isRecord(value)) throw relayHttpError(400, "artifact wrapped key must be an object");
+  return {
+    recipientKid: relayString(value.recipientKid, "", 160),
+    algorithm: relayString(value.algorithm, "", 80),
+    ephemeralPublicKey: isRecord(value.ephemeralPublicKey)
+      ? {
+          kty: relayString(value.ephemeralPublicKey.kty, "", 20),
+          crv: relayString(value.ephemeralPublicKey.crv, "", 40),
+          x: relayString(value.ephemeralPublicKey.x, "", 500),
+          kid: relayString(value.ephemeralPublicKey.kid, "", 160)
+        }
+      : {},
+    iv: relayString(value.iv, "", 500),
+    tag: relayString(value.tag, "", 500),
+    ciphertext: relayString(value.ciphertext, "", MAX_REQUEST_BODY_BYTES)
+  };
+}
+
+function createCheckpointArtifact(store, body) {
+  rejectPlaintextArtifactFields(body);
+  const id = body.artifactId || body.id
+    ? relayId(body.artifactId ?? body.id, "artifactId")
+    : generatedRelayId("artifact");
+  const idempotencyKey = relayString(body.idempotencyKey, "", 160);
+  const existing = store.artifacts[id];
+  if (existing) {
+    if (idempotencyKey && existing.idempotencyKey === idempotencyKey) {
+      return { artifact: existing, idempotent: true };
+    }
+    throw relayHttpError(409, "artifact already exists");
+  }
+  const sessionId = portableSessionId(body.sessionId);
+  const generationId = relayId(body.generationId, "generationId", { required: false });
+  const type = relayString(body.type, "", 80);
+  if (type !== "checkpoint.bundle") throw relayHttpError(400, "artifact type must be checkpoint.bundle");
+  const metadata = portableRecord(body.metadata);
+  if (metadata.sessionId && metadata.sessionId !== sessionId) throw relayHttpError(400, "artifact metadata session mismatch");
+  if (generationId && metadata.generationId && metadata.generationId !== generationId) {
+    throw relayHttpError(400, "artifact metadata generation mismatch");
+  }
+  const wrappedKeys = Array.isArray(body.wrappedKeys) ? body.wrappedKeys.map(artifactWrappedKeyRecord) : [];
+  if (wrappedKeys.length === 0) throw relayHttpError(400, "artifact requires wrappedKeys");
+  const now = new Date().toISOString();
+  const artifact = {
+    id,
+    sessionId,
+    generationId,
+    type,
+    state: "available",
+    metadata,
+    encryption: portableRecord(body.encryption),
+    ciphertext: artifactCiphertextRecord(body.ciphertext),
+    wrappedKeys,
+    idempotencyKey,
+    createdAt: now,
+    updatedAt: now
+  };
+  store.artifacts[id] = artifact;
+  appendRelayStoreEvent(store, "artifact.created", {
+    sessionId,
+    generationId,
+    artifactId: id,
+    type
+  });
+  return { artifact, idempotent: false };
+}
+
+function workflowForbiddenField(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = workflowForbiddenField(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (!isRecord(value)) return "";
+  for (const [key, child] of Object.entries(value)) {
+    if (WORKFLOW_FORBIDDEN_FIELDS.has(key)) return key;
+    const found = workflowForbiddenField(child);
+    if (found) return found;
+  }
+  return "";
+}
+
+function workflowStepNeeds(value) {
+  if (value == null) return [];
+  return relayStringList(value, 100);
+}
+
+function normalizedWorkflowStep(step) {
+  const id = relayId(step.id, "workflow step id");
+  const uses = relayId(step.uses, "workflow step uses");
+  if (!WORKFLOW_BUILTIN_ACTIONS.has(uses)) throw relayHttpError(400, `unknown workflow action ${uses}`);
+  const action = lpsActionById(uses);
+  const retry = portableRecord(step.retry);
+  const gate = portableRecord(step.gate);
+  if (action?.policy?.requiresGate && gate.before !== true) {
+    throw relayHttpError(400, `workflow action ${uses} requires a before gate`);
+  }
+  return {
+    id,
+    uses,
+    needs: workflowStepNeeds(step.needs),
+    gate: Object.keys(gate).length > 0
+      ? {
+          before: gate.before !== false,
+          reason: relayString(gate.reason, "", 300),
+          policy: relayString(gate.policy, "manual", 80)
+        }
+      : null,
+    retry: {
+      maxAttempts: positiveInteger(retry.maxAttempts ?? step.maxAttempts, 1, { min: 1, max: 20 })
+    },
+    timeoutMs: positiveInteger(step.timeoutMs ?? step.timeout?.ms, COMMAND_CLAIM_TTL_MS, { min: 1, max: 24 * 60 * 60 * 1000 }),
+    artifacts: portableRecord(step.artifacts),
+    evidence: portableRecord(step.evidence)
+  };
+}
+
+function assertWorkflowDag(steps) {
+  const ids = new Set();
+  for (const step of steps) {
+    if (ids.has(step.id)) throw relayHttpError(400, `duplicate workflow step id ${step.id}`);
+    ids.add(step.id);
+  }
+  for (const step of steps) {
+    for (const dependency of step.needs) {
+      if (!ids.has(dependency)) throw relayHttpError(400, `workflow step ${step.id} needs unknown step ${dependency}`);
+    }
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  function visit(id) {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) throw relayHttpError(400, "workflow steps contain a cycle");
+    visiting.add(id);
+    for (const dependency of byId.get(id).needs) visit(dependency);
+    visiting.delete(id);
+    visited.add(id);
+  }
+  for (const step of steps) visit(step.id);
+}
+
+function normalizeWorkflowDefinition(body) {
+  const forbidden = workflowForbiddenField(body);
+  if (forbidden) throw relayHttpError(400, `workflow DSL field ${forbidden} is forbidden`);
+  const schema = relayString(body.schema ?? body.$schema, "", 80);
+  if (schema !== WORKFLOW_SCHEMA) throw relayHttpError(400, `workflow schema must be ${WORKFLOW_SCHEMA}`);
+  const id = relayId(body.id, "workflow definition id");
+  if (id === LPS_TDD_WORKFLOW_ID) throw relayHttpError(409, "built-in workflow definition id is reserved");
+  const steps = Array.isArray(body.steps) ? body.steps.map(normalizedWorkflowStep) : [];
+  if (steps.length === 0) throw relayHttpError(400, "workflow requires at least one step");
+  assertWorkflowDag(steps);
+  const now = new Date().toISOString();
+  return {
+    id,
+    schema,
+    version: relayString(body.version, "1.0.0", 80),
+    metadata: portableRecord(body.metadata),
+    inputs: portableRecord(body.inputs),
+    steps,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function builtInWorkflowDefinition(definitionId) {
+  if (definitionId === LPS_TDD_WORKFLOW_ID) return lpsDefaultWorkflowDefinition();
+  return null;
+}
+
+function getWorkflowDefinition(store, definitionId) {
+  return store.workflowDefinitions[definitionId] ?? builtInWorkflowDefinition(definitionId);
+}
+
+function workflowDefinitionRequiresLease(definition) {
+  return definition.steps.some((step) => lpsActionById(step.uses)?.requiresLease === true);
+}
+
+function registerWorkflowDefinition(store, body) {
+  const definition = normalizeWorkflowDefinition(body);
+  const existing = store.workflowDefinitions[definition.id];
+  if (existing?.createdAt) definition.createdAt = existing.createdAt;
+  definition.updatedAt = new Date().toISOString();
+  store.workflowDefinitions[definition.id] = definition;
+  appendRelayStoreEvent(store, "workflow.definition.upserted", {
+    workflowDefinitionId: definition.id,
+    stepCount: definition.steps.length
+  });
+  return definition;
+}
+
+function workflowInputDefaults(definition) {
+  const values = {};
+  for (const [key, spec] of Object.entries(portableRecord(definition.inputs))) {
+    if (isRecord(spec) && Object.prototype.hasOwnProperty.call(spec, "default")) values[key] = spec.default;
+  }
+  return values;
+}
+
+function workflowRunIdFromBody(body) {
+  return body.runId || body.id
+    ? relayId(body.runId ?? body.id, "workflow run id")
+    : generatedRelayId("wfrun");
+}
+
+function workflowStepRuntime(step) {
+  return {
+    id: step.id,
+    commandRef: step.uses,
+    needs: [...step.needs],
+    state: "pending",
+    attempts: 0,
+    maxAttempts: step.retry.maxAttempts,
+    timeoutMs: step.timeoutMs,
+    commandId: "",
+    timeoutAt: "",
+    result: null,
+    evidence: null,
+    error: null,
+    startedAt: "",
+    completedAt: ""
+  };
+}
+
+function createWorkflowRun(store, body) {
+  const definitionId = relayId(body.definitionId, "definitionId");
+  const definition = getWorkflowDefinition(store, definitionId);
+  if (!definition) throw relayHttpError(404, "workflow definition not found");
+  let lease = null;
+  if (workflowDefinitionRequiresLease(definition)) {
+    if (!body.generationId) throw relayHttpError(409, "workflow contains lease-bound actions but generationId is missing");
+    lease = requireCurrentLease(store, relayId(body.generationId, "generationId"), {
+      hostId: body.leaseHostId ?? body.targetHostId,
+      fencingToken: body.fencingToken,
+      leaseToken: body.leaseToken
+    });
+  }
+  const runId = workflowRunIdFromBody(body);
+  if (store.workflowRuns[runId]) throw relayHttpError(409, "workflow run already exists");
+  const now = new Date().toISOString();
+  const steps = {};
+  for (const step of definition.steps) steps[step.id] = workflowStepRuntime(step);
+  const run = {
+    id: runId,
+    definitionId,
+    schema: WORKFLOW_SCHEMA,
+    sessionId: safeSessionKey(body.sessionId),
+    generationId: relayString(body.generationId, "", 160),
+    targetHostId: relayId(body.targetHostId, "targetHostId", { required: false }),
+    targetGroup: relayId(body.targetGroup, "targetGroup", { required: false }),
+    leaseHostId: lease?.hostId ?? "",
+    leaseId: lease?.id ?? "",
+    leaseToken: lease?.token ?? "",
+    fencingToken: lease?.fencingToken ?? "",
+    state: "pending",
+    inputs: {
+      ...workflowInputDefaults(definition),
+      ...portableRecord(body.inputs)
+    },
+    steps,
+    gates: {},
+    createdAt: now,
+    updatedAt: now,
+    completedAt: "",
+    error: null
+  };
+  store.workflowRuns[runId] = run;
+  appendRelayStoreEvent(store, "workflow.run.created", {
+    workflowRunId: run.id,
+    workflowDefinitionId: definitionId,
+    sessionId: run.sessionId
+  });
+  scheduleWorkflowRun(store, run);
+  return run;
+}
+
+function workflowDefinitionForRun(store, run) {
+  const definition = getWorkflowDefinition(store, run.definitionId);
+  if (!definition) throw relayHttpError(409, "workflow definition missing for run");
+  return definition;
+}
+
+function workflowStepDefinition(definition, stepId) {
+  return definition.steps.find((step) => step.id === stepId) ?? null;
+}
+
+function workflowDependenciesSucceeded(run, step) {
+  return step.needs.every((dependency) => run.steps[dependency]?.state === "succeeded");
+}
+
+function workflowInboxItemId(runId, stepId) {
+  return `workflow_gate_${runId}_${stepId}`;
+}
+
+function ensureWorkflowGate(store, run, stepDefinition) {
+  const now = new Date().toISOString();
+  const stepId = stepDefinition.id;
+  const inboxItemId = workflowInboxItemId(run.id, stepId);
+  const gate = run.gates[stepId] ?? {
+    stepId,
+    state: "waiting",
+    reason: stepDefinition.gate?.reason ?? "",
+    inboxItemId,
+    createdAt: now,
+    decidedAt: "",
+    decidedBy: ""
+  };
+  gate.state = gate.state || "waiting";
+  run.gates[stepId] = gate;
+  store.inbox[inboxItemId] ??= {
+    id: inboxItemId,
+    type: "workflow_gate",
+    action: "workflow.gate",
+    sessionId: run.sessionId,
+    workflowRunId: run.id,
+    stepId,
+    state: "waiting",
+    reason: gate.reason,
+    createdAt: now,
+    updatedAt: now
+  };
+  return gate;
+}
+
+function dispatchWorkflowStep(store, run, step, stepDefinition) {
+  const nowMs = Date.now();
+  const attempt = Number(step.attempts ?? 0) + 1;
+  const action = lpsActionById(step.commandRef);
+  if (action?.requiresLease) {
+    try {
+      requireCurrentLease(store, run.generationId, {
+        hostId: run.leaseHostId || run.targetHostId,
+        fencingToken: run.fencingToken,
+        leaseToken: run.leaseToken
+      });
+    } catch (error) {
+      const now = isoFromMs(nowMs);
+      step.state = "conflicted";
+      step.error = { code: "lease_required", message: error.message };
+      step.completedAt = now;
+      step.updatedAt = now;
+      run.updatedAt = now;
+      return;
+    }
+  }
+  const { command } = createRelayCommand(store, {
+    sessionId: run.sessionId,
+    commandRef: step.commandRef,
+    targetHostId: run.targetHostId,
+    targetGroup: run.targetGroup,
+    generationId: run.generationId,
+    leaseToken: action?.requiresLease ? run.leaseToken : "",
+    idempotencyKey: `workflow:${run.id}:${step.id}:${attempt}`,
+    payload: {
+      workflowRunId: run.id,
+      workflowDefinitionId: run.definitionId,
+      stepId: step.id,
+      inputs: run.inputs,
+      action: action ? {
+        id: action.id,
+        mutatesWorkspace: action.mutatesWorkspace === true,
+        requiresLease: action.requiresLease === true
+      } : null,
+      dependencies: Object.fromEntries(step.needs.map((dependencyId) => {
+        const dependency = run.steps[dependencyId];
+        return [dependencyId, {
+          state: dependency?.state ?? "",
+          result: dependency?.result ?? null,
+          evidence: dependency?.evidence ?? null
+        }];
+      })),
+      artifacts: stepDefinition.artifacts,
+      evidence: stepDefinition.evidence
+    },
+    ttlMs: step.timeoutMs,
+    maxAttempts: 1
+  });
+  const now = isoFromMs(nowMs);
+  step.state = "running";
+  step.attempts = attempt;
+  step.commandId = command.id;
+  step.timeoutAt = isoFromMs(nowMs + step.timeoutMs);
+  step.startedAt = step.startedAt || now;
+  step.updatedAt = now;
+  step.error = null;
+  run.updatedAt = now;
+}
+
+function refreshWorkflowRunTimeouts(store, run) {
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return;
+  const definition = workflowDefinitionForRun(store, run);
+  const nowMs = Date.now();
+  const now = isoFromMs(nowMs);
+  for (const step of Object.values(run.steps)) {
+    if (step.state !== "running" || !step.timeoutAt || parseTimestampMs(step.timeoutAt) > nowMs) continue;
+    if (Number(step.attempts ?? 0) < Number(step.maxAttempts ?? 1)) {
+      step.state = "pending";
+      step.commandId = "";
+      step.timeoutAt = "";
+      step.error = { code: "timeout", message: "workflow step timed out; retrying" };
+      const stepDefinition = workflowStepDefinition(definition, step.id);
+      if (stepDefinition) dispatchWorkflowStep(store, run, step, stepDefinition);
+    } else {
+      step.state = "expired";
+      step.completedAt = now;
+      step.error = { code: "timeout", message: "workflow step timed out" };
+    }
+  }
+}
+
+function finishWorkflowStepCommand(store, step, state, body) {
+  if (!step?.commandId) return;
+  const command = store.commands[step.commandId];
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return;
+  const now = new Date().toISOString();
+  command.state = state === "conflicted" ? "failed" : state;
+  command.updatedAt = now;
+  command.completedAt = now;
+  command.result = body.result === undefined ? null : body.result;
+  command.error = body.error === undefined
+    ? null
+    : (isRecord(body.error) ? body.error : { message: String(body.error) });
+}
+
+function cancelWorkflowStepCommand(store, step, message = "workflow step cancelled") {
+  if (!step?.commandId) return;
+  const command = store.commands[step.commandId];
+  if (!command || COMMAND_TERMINAL_STATES.has(command.state)) return;
+  const now = new Date().toISOString();
+  command.state = "cancelled";
+  command.updatedAt = now;
+  command.completedAt = command.completedAt || now;
+  command.error = { code: "workflow_cancelled", message };
+}
+
+function cancelNonTerminalWorkflowSteps(store, run, message) {
+  const now = new Date().toISOString();
+  for (const step of Object.values(run.steps)) {
+    if (WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) continue;
+    cancelWorkflowStepCommand(store, step, message);
+    step.state = "cancelled";
+    step.completedAt = now;
+    step.updatedAt = now;
+    step.error ??= { code: "workflow_terminal", message };
+  }
+}
+
+function updateWorkflowRunState(store, run) {
+  const steps = Object.values(run.steps);
+  const now = new Date().toISOString();
+  if (steps.some((step) => step.state === "conflicted")) run.state = "conflicted";
+  else if (steps.some((step) => step.state === "expired")) run.state = "expired";
+  else if (steps.some((step) => step.state === "failed")) run.state = "failed";
+  else if (steps.some((step) => step.state === "cancelled")) run.state = "cancelled";
+  else if (steps.length > 0 && steps.every((step) => step.state === "succeeded")) run.state = "succeeded";
+  else if (steps.some((step) => step.state === "waiting_gate")) run.state = "waiting_gate";
+  else if (steps.some((step) => step.state === "running")) run.state = "running";
+  else if (steps.some((step) => step.state === "ready")) run.state = "ready";
+  else run.state = "pending";
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) {
+    run.completedAt ||= now;
+    if (run.state !== "succeeded") cancelNonTerminalWorkflowSteps(store, run, `workflow run ${run.state}`);
+  }
+  run.updatedAt = now;
+}
+
+function scheduleWorkflowRun(store, run) {
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  updateWorkflowRunState(store, run);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  refreshWorkflowRunTimeouts(store, run);
+  updateWorkflowRunState(store, run);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  const definition = workflowDefinitionForRun(store, run);
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const stepDefinition of definition.steps) {
+      const step = run.steps[stepDefinition.id];
+      if (!step || WORKFLOW_STEP_TERMINAL_STATES.has(step.state) || step.state === "running" || step.state === "waiting_gate") continue;
+      if (!workflowDependenciesSucceeded(run, step)) continue;
+      if (stepDefinition.gate?.before && run.gates[step.id]?.state !== "approved") {
+        ensureWorkflowGate(store, run, stepDefinition);
+        step.state = "waiting_gate";
+        step.updatedAt = new Date().toISOString();
+        progress = true;
+        continue;
+      }
+      dispatchWorkflowStep(store, run, step, stepDefinition);
+      progress = true;
+    }
+  }
+  updateWorkflowRunState(store, run);
+  return run;
+}
+
+function workflowRunOr404(store, runId) {
+  const run = store.workflowRuns[runId];
+  if (!run) throw relayHttpError(404, "workflow run not found");
+  return run;
+}
+
+function recordWorkflowStepResult(store, runId, stepId, body) {
+  const run = workflowRunOr404(store, runId);
+  const step = run.steps[stepId];
+  if (!step) throw relayHttpError(404, "workflow step not found");
+  const commandId = relayString(body.commandId, "", 160);
+  const state = relayString(body.state ?? body.status, "", 40);
+  if (!["succeeded", "failed", "cancelled", "conflicted"].includes(state)) {
+    throw relayHttpError(400, "workflow step result state is invalid");
+  }
+  if (WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) {
+    if (step.commandId === commandId && step.state === state) return { run, idempotent: true };
+    throw relayHttpError(409, `workflow step is ${step.state}`);
+  }
+  if (step.state !== "running") throw relayHttpError(409, `workflow step is ${step.state}`);
+  if (step.commandId !== commandId) throw relayHttpError(409, "stale workflow step command");
+  try {
+    validateLpsActionResult(step.commandRef, state, body);
+  } catch (error) {
+    throw relayHttpError(400, error.message);
+  }
+  const now = new Date().toISOString();
+  finishWorkflowStepCommand(store, step, state, body);
+  if (state === "succeeded") {
+    step.state = "succeeded";
+    step.result = body.result ?? null;
+    step.evidence = body.evidence ?? null;
+    step.completedAt = now;
+    step.updatedAt = now;
+  } else if (state === "failed" && Number(step.attempts ?? 0) < Number(step.maxAttempts ?? 1)) {
+    step.state = "pending";
+    step.commandId = "";
+    step.timeoutAt = "";
+    step.error = body.error ?? { message: "workflow step failed; retrying" };
+    step.updatedAt = now;
+  } else {
+    step.state = state;
+    step.error = body.error ?? null;
+    step.result = body.result ?? null;
+    step.completedAt = now;
+    step.updatedAt = now;
+  }
+  scheduleWorkflowRun(store, run);
+  appendRelayStoreEvent(store, "workflow.step.completed", {
+    workflowRunId: run.id,
+    stepId,
+    state: step.state
+  });
+  return { run, idempotent: false };
+}
+
+function recordWorkflowStepResultFromCommand(store, command) {
+  const workflowRunId = command?.payload?.workflowRunId;
+  const stepId = command?.payload?.stepId;
+  if (!workflowRunId || !stepId) return null;
+  if (!store.workflowRuns[workflowRunId]) return null;
+  const result = isRecord(command.result) ? command.result : {};
+  return recordWorkflowStepResult(store, workflowRunId, stepId, {
+    commandId: command.id,
+    state: command.state,
+    result,
+    evidence: isRecord(result.evidence) ? result.evidence : null,
+    error: command.error
+  }).run;
+}
+
+function decideWorkflowGate(store, runId, stepId, body) {
+  const run = workflowRunOr404(store, runId);
+  const step = run.steps[stepId];
+  if (!step) throw relayHttpError(404, "workflow step not found");
+  const gate = run.gates[stepId];
+  if (!gate) throw relayHttpError(404, "workflow gate not found");
+  if (gate.state !== "waiting") return { run, idempotent: true };
+  const decision = relayString(body.decision, "", 40);
+  const now = new Date().toISOString();
+  if (decision === "approved" || decision === "approve") {
+    gate.state = "approved";
+    gate.decidedAt = now;
+    gate.decidedBy = relayString(body.decidedBy, "", 160);
+    const inboxItem = store.inbox[gate.inboxItemId];
+    if (inboxItem) {
+      inboxItem.state = "acknowledged";
+      inboxItem.updatedAt = now;
+    }
+    step.state = "pending";
+    step.updatedAt = now;
+    scheduleWorkflowRun(store, run);
+  } else if (decision === "denied" || decision === "deny") {
+    gate.state = "denied";
+    gate.decidedAt = now;
+    gate.decidedBy = relayString(body.decidedBy, "", 160);
+    step.state = "cancelled";
+    step.error = { code: "gate_denied", message: relayString(body.reason, "workflow gate denied", 300) };
+    step.completedAt = now;
+    const inboxItem = store.inbox[gate.inboxItemId];
+    if (inboxItem) {
+      inboxItem.state = "denied";
+      inboxItem.updatedAt = now;
+    }
+    updateWorkflowRunState(store, run);
+  } else {
+    throw relayHttpError(400, "workflow gate decision must be approved or denied");
+  }
+  return { run, idempotent: false };
+}
+
+function cancelWorkflowRun(store, runId, body) {
+  const run = workflowRunOr404(store, runId);
+  if (WORKFLOW_TERMINAL_STATES.has(run.state)) return run;
+  const now = new Date().toISOString();
+  run.state = "cancelled";
+  run.completedAt = now;
+  run.error = { code: "cancelled", message: relayString(body.reason, "workflow run cancelled", 300) };
+  for (const step of Object.values(run.steps)) {
+    if (!WORKFLOW_STEP_TERMINAL_STATES.has(step.state)) {
+      cancelWorkflowStepCommand(store, step, "workflow run cancelled");
+      step.state = "cancelled";
+      step.completedAt = now;
+      step.updatedAt = now;
+    }
+  }
+  run.updatedAt = now;
+  appendRelayStoreEvent(store, "workflow.run.cancelled", { workflowRunId: run.id });
+  return run;
+}
+
+function appendSessionMessage(store, requestedSessionId, body) {
+  const [sessionId, session] = getSession(store, requestedSessionId);
+  const message = normalizeMessage(body, sessionId, session.nextMessageSeq++);
+  boundedPush(session.messages, message);
+  appendRelayStoreEvent(store, "session.message.appended", {
+    sessionId,
+    messageId: message.id,
+    messageSeq: message.seq,
+    targetAgentId: message.targetAgentId,
+    action: message.action ?? ""
+  });
+  return { sessionId, message };
+}
+
 function enabledFeishuTransports() {
   return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
     .filter((transport) => transport?.enabled !== false && transport?.type === "feishu");
+}
+
+function enabledTelegramTransports() {
+  return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
+    .filter((transport) => transport?.enabled !== false && transport?.type === "telegram");
+}
+
+function telegramTransportFromRequest(url) {
+  const name = url.searchParams.get("transport");
+  const transports = enabledTelegramTransports();
+  if (name) return transports.find((transport) => String(transport.name ?? "telegram") === name);
+  return transports[0];
+}
+
+function telegramPollerAgentId(transport) {
+  return String(
+    transport?.pollerAgentId
+      ?? RAW_CONFIG.routing?.telegramPollerAgentId
+      ?? "legax-daemon"
+  );
+}
+
+function telegramDefaultTarget(transport, state) {
+  if (state.selection?.targetAgentId) return String(state.selection.targetAgentId);
+  const configured = transport?.defaultTarget ?? RAW_CONFIG.routing?.defaultTarget;
+  if (!configured || configured === "none") return "";
+  if (configured === "self") return "legax-daemon";
+  return String(configured);
+}
+
+function telegramTransportState(store, transport) {
+  const key = telegramTransportKey(transport);
+  const existing = store.transports[key];
+  if (existing == null) {
+    store.transports[key] = {
+      type: "telegram",
+      name: String(transport.name ?? "telegram"),
+      offset: 0,
+      seen: {},
+      selection: {}
+    };
+  } else if (!isRecord(existing)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: expected object`);
+  }
+  const state = store.transports[key];
+  state.type = "telegram";
+  state.name = String(transport.name ?? "telegram");
+  if (!Number.isFinite(Number(state.offset))) state.offset = 0;
+  state.offset = Math.max(0, Math.trunc(Number(state.offset)));
+  if (state.seen == null) state.seen = {};
+  if (!isRecord(state.seen)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: seen must be an object`);
+  }
+  if (state.selection == null) state.selection = {};
+  if (!isRecord(state.selection)) {
+    throw new Error(`invalid relay store transport "${key}" at ${STORE_PATH}: selection must be an object`);
+  }
+  return [key, state];
+}
+
+function telegramChatAllowed(transport, chatId) {
+  return String(chatId) === String(transport.chatId);
+}
+
+function rememberTelegramUpdate(state, dedupeId) {
+  state.seen[dedupeId] = true;
+  const entries = Object.keys(state.seen);
+  const maxSeen = Math.max(1, Number(state.maxSeen ?? 500));
+  if (entries.length <= maxSeen) return;
+  for (const key of entries.slice(0, entries.length - maxSeen)) {
+    delete state.seen[key];
+  }
+}
+
+function updateTelegramSelectionFromMessage(state, message) {
+  if (message.type !== "control") return;
+  if (message.action === "list_agent_projects") {
+    state.selection.targetAgentId = message.targetAgentId;
+  }
+  if (message.action === "list_agent_sessions") {
+    state.selection.targetAgentId = message.targetAgentId;
+    state.selection.selectedProjectRef = message.projectRef ?? "";
+  }
+  if (message.action === "select_session") {
+    state.selection.targetAgentId = message.targetAgentId;
+    state.selection.selectedThreadId = message.threadRef ?? "";
+  }
+}
+
+function processTelegramUpdateInStore(store, transport, update, { sessionId: requestedSessionId } = {}) {
+  const updateId = telegramUpdateId(update);
+  const callbackId = String(update?.callback_query?.id ?? "");
+  if (updateId == null) return { ignored: true, reason: "missing update id" };
+  const dedupeId = `telegram:${updateId}`;
+  const [, state] = telegramTransportState(store, transport);
+  if (state.seen[dedupeId]) {
+    return { duplicate: true, callbackId };
+  }
+  if (!telegramChatAllowed(transport, telegramUpdateChatId(update))) {
+    rememberTelegramUpdate(state, dedupeId);
+    return { ignored: true, reason: "chat not allowed", callbackId, changed: true };
+  }
+  const messageBody = parseTelegramUpdate(update, {
+    targetAgentId: telegramDefaultTarget(transport, state),
+    pollerAgentId: telegramPollerAgentId(transport)
+  });
+  if (!messageBody) {
+    rememberTelegramUpdate(state, dedupeId);
+    return { ignored: true, reason: "unsupported update", callbackId, changed: true };
+  }
+  const { message } = appendSessionMessage(store, requestedSessionId ?? transport.sessionId, messageBody);
+  rememberTelegramUpdate(state, dedupeId);
+  updateTelegramSelectionFromMessage(state, message);
+  return { message, callbackId, changed: true };
+}
+
+async function answerTelegramCallback(transport, callbackId, text = "") {
+  if (!callbackId) return;
+  const token = transport.botToken;
+  if (!token) return;
+  const body = { callback_query_id: callbackId };
+  if (text) body.text = text;
+  await httpJson(telegramApiUrl(transport, token, "answerCallbackQuery"), {
+    method: "POST",
+    body: JSON.stringify(body)
+  }, Number(transport.timeoutMs ?? 15000));
+}
+
+function verifyTelegramWebhook(req, url, transport) {
+  const expected = String(transport?.webhookSecret ?? transport?.secretToken ?? "");
+  if (expected) {
+    return safeEqual(req.headers["x-telegram-bot-api-secret-token"] || "", expected);
+  }
+  return requireDesktop(req, url);
+}
+
+function telegramPollIntervalMs(transport) {
+  return Math.max(100, Number(transport.pollIntervalMs ?? RAW_CONFIG.relay?.telegramPollIntervalMs ?? 1000));
+}
+
+async function pollTelegramTransport(transport) {
+  const token = transport.botToken;
+  const chatId = transport.chatId;
+  if (!token || !chatId) return;
+  const key = telegramTransportKey(transport);
+  if (TELEGRAM_ACTIVE_POLLS.has(key)) return;
+  TELEGRAM_ACTIVE_POLLS.add(key);
+  const callbacksToAck = [];
+  const messagesToAudit = [];
+  try {
+    const initialStore = loadStore();
+    const [, initialState] = telegramTransportState(initialStore, transport);
+    const requestOffset = initialState.offset;
+    const response = await httpJson(telegramApiUrl(transport, token, "getUpdates"), {
+      method: "POST",
+      body: JSON.stringify({
+        offset: requestOffset || undefined,
+        timeout: 0,
+        limit: 20,
+        allowed_updates: ["message", "edited_message", "callback_query"]
+      })
+    }, Number(transport.timeoutMs ?? 15000));
+    if (!Array.isArray(response.result) || response.result.length === 0) return;
+    const store = loadStore();
+    const [, state] = telegramTransportState(store, transport);
+    const beforeOffset = state.offset;
+    let changed = false;
+    for (const update of response.result) {
+      const updateId = telegramUpdateId(update);
+      if (updateId != null) {
+        state.offset = Math.max(state.offset, updateId + 1);
+      }
+      const result = processTelegramUpdateInStore(store, transport, update, {
+        sessionId: transport.sessionId
+      });
+      changed = changed || result.changed === true;
+      if (result.callbackId) callbacksToAck.push(result.callbackId);
+      if (result.message) messagesToAudit.push(result.message);
+    }
+    if (changed || state.offset !== beforeOffset) {
+      saveStore(store);
+    }
+  } finally {
+    TELEGRAM_ACTIVE_POLLS.delete(key);
+  }
+  for (const message of messagesToAudit) {
+    appendAudit("phone->desktop", message);
+  }
+  for (const callbackId of callbacksToAck) {
+    answerTelegramCallback(transport, callbackId).catch((error) => {
+      console.error(`[relay] telegram callback ack failed for ${transport.name ?? "telegram"}: ${error.message}`);
+    });
+  }
+}
+
+function stopRelayTelegramPollers() {
+  for (const timer of TELEGRAM_POLL_TIMERS) clearInterval(timer);
+  TELEGRAM_POLL_TIMERS = [];
+}
+
+function startRelayTelegramPollers(server) {
+  stopRelayTelegramPollers();
+  for (const transport of enabledTelegramTransports()) {
+    if (transport.polling === false || transport.webhookOnly === true) continue;
+    const timer = setInterval(() => {
+      pollTelegramTransport(transport).catch((error) => {
+        console.error(`[relay] telegram poll failed for ${transport.name ?? "telegram"}: ${error.message}`);
+      });
+    }, telegramPollIntervalMs(transport));
+    TELEGRAM_POLL_TIMERS.push(timer);
+  }
+  server.once("close", stopRelayTelegramPollers);
+}
+
+async function dispatchRelayTelegramEvent(event) {
+  const results = [];
+  for (const transport of enabledTelegramTransports()) {
+    if (transport.outbound === false || transport.sendEvents === false) continue;
+    try {
+      const result = await sendTelegramEvent(RAW_CONFIG, transport, event);
+      results.push({ transport: transport.name ?? "telegram", type: "telegram", ok: true, result });
+    } catch (error) {
+      results.push({ transport: transport.name ?? "telegram", type: "telegram", ok: false, error: error.message });
+      console.error(`[relay] telegram outbound failed for ${transport.name ?? "telegram"}: ${error.message}`);
+    }
+  }
+  return results;
 }
 
 function feishuTransportFromRequest(url) {
@@ -980,7 +2694,7 @@ function sendJson(res, status, body, extraHeaders = {}) {
     "cache-control": "no-store",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-    "access-control-allow-headers": "content-type,x-legax-secret",
+    "access-control-allow-headers": "content-type,x-legax-secret,x-telegram-bot-api-secret-token",
     ...extraHeaders
   });
   res.end(JSON.stringify(body));
@@ -3855,6 +5569,444 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/sessions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const session = createPortableSession(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, session });
+    return;
+  }
+
+  const sessionRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const sessionId = decodeURIComponent(sessionRoute[1]);
+    const store = loadStore();
+    const session = store.sessions[sessionId];
+    if (!session) {
+      sendJson(res, 404, { ok: false, error: "session not found" });
+      return;
+    }
+    const payload = publicPortableSession(store, ensureSessionShape(session, sessionId));
+    saveStore(store);
+    sendJson(res, 200, { ok: true, ...payload });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/generations") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = createPortableGeneration(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  const generationRoute = url.pathname.match(/^\/api\/generations\/([^/]+)(?:\/([^/]+))?$/);
+  if (generationRoute && req.method === "GET" && !generationRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const generationId = decodeURIComponent(generationRoute[1]);
+    const store = loadStore();
+    const generation = store.generations[generationId];
+    if (!generation) {
+      sendJson(res, 404, { ok: false, error: "generation not found" });
+      return;
+    }
+    const activeLease = activeLeaseForGeneration(store, generationId);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation, activeLease });
+    return;
+  }
+
+  if (generationRoute && req.method === "POST" && generationRoute[2] === "update") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = updatePortableGeneration(store, decodeURIComponent(generationRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  if (generationRoute && req.method === "POST" && generationRoute[2] === "fork") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const generation = forkPortableGeneration(store, decodeURIComponent(generationRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, generation });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/leases/claim") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = claimPortableLease(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  const leaseRoute = url.pathname.match(/^\/api\/leases\/([^/]+)(?:\/([^/]+))?$/);
+  if (leaseRoute && req.method === "GET" && !leaseRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const leaseId = decodeURIComponent(leaseRoute[1]);
+    const store = loadStore();
+    const lease = store.leases[leaseId];
+    if (!lease) {
+      sendJson(res, 404, { ok: false, error: "lease not found" });
+      return;
+    }
+    refreshPortableLease(store, lease);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (leaseRoute && req.method === "POST" && leaseRoute[2] === "renew") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = renewPortableLease(store, decodeURIComponent(leaseRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (leaseRoute && req.method === "POST" && leaseRoute[2] === "release") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const lease = releasePortableLease(store, decodeURIComponent(leaseRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, lease });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/handoffs") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const handoff = createPortableHandoff(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  const handoffRecordRoute = url.pathname.match(/^\/api\/handoffs\/([^/]+)$/);
+  if (handoffRecordRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const handoffId = decodeURIComponent(handoffRecordRoute[1]);
+    const store = loadStore();
+    const handoff = store.handoffs[handoffId];
+    if (!handoff) {
+      sendJson(res, 404, { ok: false, error: "handoff not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  const handoffRoute = url.pathname.match(/^\/api\/handoffs\/([^/]+)\/transition$/);
+  if (handoffRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const handoff = transitionPortableHandoff(store, decodeURIComponent(handoffRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, handoff });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/artifacts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { artifact, idempotent } = createCheckpointArtifact(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, artifact, idempotent });
+    return;
+  }
+
+  const artifactRoute = url.pathname.match(/^\/api\/artifacts\/([^/]+)$/);
+  if (artifactRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const artifactId = decodeURIComponent(artifactRoute[1]);
+    const store = loadStore();
+    const artifact = store.artifacts[artifactId];
+    if (!artifact) {
+      sendJson(res, 404, { ok: false, error: "artifact not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, artifact });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/workflow-actions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, actions: lpsActionContracts() });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/workflow-definitions") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const definition = registerWorkflowDefinition(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, definition });
+    return;
+  }
+
+  const workflowDefinitionRoute = url.pathname.match(/^\/api\/workflow-definitions\/([^/]+)$/);
+  if (workflowDefinitionRoute && req.method === "GET") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const definitionId = decodeURIComponent(workflowDefinitionRoute[1]);
+    const store = loadStore();
+    const definition = getWorkflowDefinition(store, definitionId);
+    if (!definition) {
+      sendJson(res, 404, { ok: false, error: "workflow definition not found" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, definition });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/workflow-runs") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const run = createWorkflowRun(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  const workflowRunRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)(?:\/(.+))?$/);
+  if (workflowRunRoute && req.method === "GET" && !workflowRunRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const runId = decodeURIComponent(workflowRunRoute[1]);
+    const store = loadStore();
+    const run = workflowRunOr404(store, runId);
+    scheduleWorkflowRun(store, run);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  if (workflowRunRoute && req.method === "POST" && workflowRunRoute[2] === "cancel") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const run = cancelWorkflowRun(store, decodeURIComponent(workflowRunRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run });
+    return;
+  }
+
+  const workflowStepResultRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)\/steps\/([^/]+)\/result$/);
+  if (workflowStepResultRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { run, idempotent } = recordWorkflowStepResult(
+      store,
+      decodeURIComponent(workflowStepResultRoute[1]),
+      decodeURIComponent(workflowStepResultRoute[2]),
+      body
+    );
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run, idempotent });
+    return;
+  }
+
+  const workflowGateRoute = url.pathname.match(/^\/api\/workflow-runs\/([^/]+)\/gates\/([^/]+)$/);
+  if (workflowGateRoute && req.method === "POST") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { run, idempotent } = decideWorkflowGate(
+      store,
+      decodeURIComponent(workflowGateRoute[1]),
+      decodeURIComponent(workflowGateRoute[2]),
+      body
+    );
+    saveStore(store);
+    sendJson(res, 200, { ok: true, run, idempotent });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hosts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const host = registerRelayHost(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, host: publicRelayHost(host) });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hosts") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const nowMs = Date.now();
+    const hosts = Object.values(store.hosts)
+      .map((host) => publicRelayHost(host, nowMs))
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    sendJson(res, 200, { ok: true, hosts });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/commands") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { command, idempotent } = createRelayCommand(store, body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command, idempotent });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/commands") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const commands = eligibleRelayCommands(store, url);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, commands });
+    return;
+  }
+
+  const commandRoute = url.pathname.match(/^\/api\/commands\/([^/]+)(?:\/([^/]+))?$/);
+  if (commandRoute && req.method === "GET" && !commandRoute[2]) {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const commandId = decodeURIComponent(commandRoute[1]);
+    const store = loadStore();
+    const command = store.commands[commandId];
+    if (!command) {
+      sendJson(res, 404, { ok: false, error: "command not found" });
+      return;
+    }
+    refreshRelayCommand(command);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command });
+    return;
+  }
+
+  if (commandRoute && req.method === "POST" && commandRoute[2] === "claim") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const command = claimRelayCommand(store, decodeURIComponent(commandRoute[1]), body);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command });
+    return;
+  }
+
+  if (commandRoute && req.method === "POST" && commandRoute[2] === "result") {
+    if (!requireDesktop(req, url)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const store = loadStore();
+    const { command, idempotent } = completeRelayCommand(store, decodeURIComponent(commandRoute[1]), body);
+    const workflowRun = idempotent ? null : recordWorkflowStepResultFromCommand(store, command);
+    saveStore(store);
+    sendJson(res, 200, { ok: true, command, workflowRun, idempotent });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/events") {
     if (!requireDesktop(req, url)) {
       sendJson(res, 401, { ok: false, error: "unauthorized" });
@@ -3874,7 +6026,8 @@ async function route(req, res) {
     });
     saveStore(store);
     appendAudit("desktop->phone", event);
-    sendJson(res, 200, { ok: true, event });
+    const outbound = await dispatchRelayTelegramEvent(event);
+    sendJson(res, 200, { ok: true, event, outbound });
     return;
   }
 
@@ -3908,6 +6061,37 @@ async function route(req, res) {
     saveStore(store);
     appendAudit("phone->desktop", message);
     sendJson(res, 200, { ok: true, message });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/telegram/events") {
+    const body = await readJsonBody(req);
+    const transport = telegramTransportFromRequest(url);
+    if (!transport || !verifyTelegramWebhook(req, url, transport)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const store = loadStore();
+    const result = processTelegramUpdateInStore(store, transport, body, {
+      sessionId: url.searchParams.get("sessionId") ?? transport.sessionId
+    });
+    if (result.changed) saveStore(store);
+    if (result.callbackId) {
+      answerTelegramCallback(transport, result.callbackId).catch((error) => {
+        console.error(`[relay] telegram callback ack failed for ${transport.name ?? "telegram"}: ${error.message}`);
+      });
+    }
+    if (result.message) {
+      appendAudit("phone->desktop", result.message);
+      sendJson(res, 200, { ok: true, message: result.message });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      ignored: result.ignored === true,
+      duplicate: result.duplicate === true,
+      reason: result.reason
+    });
     return;
   }
 
@@ -4042,12 +6226,14 @@ async function route(req, res) {
 
 export function createRelayServer(options = {}) {
   initializeRelayRuntime(options);
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     route(req, res).catch((error) => {
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
       sendJson(res, status, { ok: false, error: error.message });
     });
   });
+  startRelayTelegramPollers(server);
+  return server;
 }
 
 export function startRelayServer(options = {}) {

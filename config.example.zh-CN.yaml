@@ -54,8 +54,15 @@ daemon:
   restartBackoffMaxMs: 30000
   restartMaxAttempts: 5       # adapter 快速失败达到该次数后打开重启熔断
   restartHealthyAfterMs: 60000 # 运行达到该时长后重置重启熔断
-  remoteRouter: true
+  remoteRouter: true          # daemon 轮询 relay；启用 relay transport 时，Telegram 轮询/webhook 与 Telegram 出站由 relay 负责
   remotePollIntervalMs: 1000
+  hostId: ""                  # 可选的稳定 relay host id；留空时由主机名和配置路径推导
+  hostGroups:
+    - default                 # relay command queue 可以按组目标投递到一类 host
+  hostHeartbeatTtlMs: 30000   # 超过这个 TTL 未收到心跳时，relay 将该 daemon 标为 offline
+  hostHeartbeatIntervalMs: 10000
+  commandPollIntervalMs: 1000
+  commandClaimTtlMs: 30000    # daemon claim 一个 relay command 后的最长执行时间，超时后可 retry/failed
   projectRoots:               # Telegram Mini App 项目选择器可浏览的本机目录
     - F:/workspace
   projectRootHiddenNames:
@@ -95,7 +102,10 @@ security:
 # 所有值（secrets / tokens / chatId / url）都直接 inline 写在 YAML 里——没有 .env 层。
 # 这份 config.yaml 已经在 .gitignore，需要轮换任何密钥时直接改这里即可。
 # 推荐默认：只启用 `self-hosted-relay`。Telegram 与 webhook 在本模板里保持关闭；
-# 启用前请阅读 docs/ARCHITECTURE.zh-CN.md 中的取舍以及 README.zh-CN.md 的"本机文件与密钥"。
+# 启用前请阅读 docs/ARCHITECTURE.zh-CN.md 中的取舍以及 README.zh-CN.md 的“本机文件与密钥”。
+# 启用 relay transport 时，Telegram 归 relay 所有：relay 轮询 getUpdates
+# （或接收 /api/telegram/events webhook），将入站内容归一化写入 /api/messages，
+# 并把桌面端 /api/events fan-out 回 Telegram。daemon/adapter 只在无 relay 时保留直连兜底。
 transports:
   - name: self-hosted-relay
     type: relay
@@ -110,6 +120,8 @@ transports:
   - name: telegram
     type: telegram
     enabled: false
+    # polling: true                             # relay 侧 getUpdates 轮询；使用 /api/telegram/events webhook 时设为 false
+    # webhookSecret: replace-with-a-telegram-webhook-secret # 使用 webhook 时校验 x-telegram-bot-api-secret-token
     botToken: TELEGRAM_BOT_TOKEN_VALUE_HERE     # 粘贴 @BotFather 给的 token
     chatId: 0                                   # 真实数字 chat id（用 scripts/configure-telegram-chat.mjs 发现）
     # apiBaseUrl: http://127.0.0.1:9000/bot     # 可选：本地 Bot API 网关或测试 relay；默认连接 Telegram

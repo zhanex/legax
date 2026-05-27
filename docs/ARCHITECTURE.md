@@ -54,22 +54,24 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
 
 3. Self-hosted relay
    - `scripts/simple-relay-server.mjs`
-   - Shares HTTP, store, pairing, TWA, Feishu, and browser behavior through `scripts/lib/relay-server-core.mjs`.
+   - Shares HTTP, store, pairing, TWA, Telegram, Feishu, and browser behavior through `scripts/lib/relay-server-core.mjs`.
    - Packaged by `self-hosted-relay/` for Linux installs as a thin launcher plus the shared relay core files.
    - Provides desktop APIs, phone APIs, and a phone web page.
    - Routes inbound phone messages by `targetAgentId`.
    - Stores relay state under `relay.storePath`; the default is `./data/relay-store.json` for the development relay and `/var/lib/legax-relay/relay-store.json` for the standalone relay.
    - Uses the first formal relay store schema, `legax.relay/1`. This is not a "V2" format; Legax has not shipped a stable V1 release.
-   - Owns portable relay session state, including sessions, generations, leases, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
+   - Owns portable relay session state, including sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, and workflow definitions/runs. See [Relay Store](RELAY_STORE.md).
+   - Treats native Codex, Claude Code, Gemini CLI, and OpenCode session ids as generation metadata, not as public relay session identity.
+   - Exposes a relay-owned host registry and command queue. The relay records host heartbeats, command eligibility, claims, terminal results, and stale-result rejection; local daemons execute the allowlisted commands.
 
 4. Third-party transports
-   - Telegram supports outbound messages, inbound polling, inline CLI/project/session buttons, and approval buttons.
+   - Telegram supports relay-owned outbound messages, relay-owned `getUpdates` polling or `/api/telegram/events` webhooks, inline CLI/project/session buttons, and approval buttons.
    - Telegram outbound delivery can be filtered at daemon, CLI, and transport layers (`daemon.notifications`, `codex/claude/gemini/opencode.notifications`, and `transports[].notifications`). Filtering is transport-local; the relay can still keep the full event stream.
    - Telegram messages are HTML-formatted and split into multiple `sendMessage` calls before Telegram's message length limit.
    - Feishu/Lark supports outbound app-bot messages, interactive approval cards, and inbound event callbacks through the relay's `/api/feishu/events` endpoint.
    - Feishu/Lark delivery can be filtered with the same `messageDetail` policy shape through `transports[].notifications` or `transports[].feishuNotifications`.
    - Generic webhook supports outbound event delivery to custom services.
-   - Only one Telegram poller should read `getUpdates` for a shared bot; messages are queued by `targetAgentId`.
+   - Only the relay should read Telegram `getUpdates` when a relay transport is enabled. Direct daemon/adapter Telegram polling remains a no-relay fallback.
 
 5. Codex agent
    - Canonical config key: `codex`.
@@ -114,7 +116,9 @@ TUI or PTY hosting is a fallback backend only. It is useful when a CLI has no st
    - `scripts/legax-daemon.mjs`
    - Reads the same YAML config and supervises all enabled CLI adapters.
    - Keeps concurrent Codex, Claude, Gemini, and OpenCode work in one relay session.
-   - Owns relay, Telegram, and Feishu/Lark-backed inbound routing while running, so remote menus and on-demand launches do not depend on any specific adapter being alive.
+   - Polls relay `/api/messages` while running; relay-owned Telegram and Feishu/Lark inbound actions enter through the same message queue, so remote menus and on-demand launches do not depend on any specific adapter being alive.
+   - Registers itself as a relay host with version, platform, enabled adapter metadata, host groups, and supported command refs. It polls the relay command queue and executes only non-shell built-ins: relay health/status commands plus the restricted LPS TDD action set. Workspace-mutating LPS actions require an active portable-session lease, and `pr.create` is not advertised unless explicitly enabled.
+   - Uses relay sessions and generations as the portable identity layer; `runtimeStatePath` may cache local cursors and selected native sessions, but relay state is authoritative for portable sessions, lease ownership, handoff audit, and fork lineage.
    - Restarts crashed adapters with bounded backoff unless `daemon.restart: false`.
    - Watches runtime launch requests and starts `autoStart: false` adapters when third-party or phone actions target them.
    - Writes adapter-specific MCP config before launching Claude Code or Gemini CLI when `mcpAutoConfigure` is enabled.
@@ -243,9 +247,9 @@ The literal target `*`, `all`, or `broadcast` skips routing and delivers to ever
 
 **2. Who polls remote inbound channels?**
 
-With the unified daemon, `daemon.remoteRouter: true` is the default. The daemon owns relay `/api/messages` polling and Telegram `getUpdates`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. Feishu/Lark callbacks enter through the relay and then follow the same `/api/messages` path. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
+With the unified daemon, `daemon.remoteRouter: true` is the default. When an enabled relay transport exists, Telegram is relay-owned: the relay reads Telegram `getUpdates` or accepts `/api/telegram/events` webhooks, normalizes text and callbacks into `/api/messages`, acknowledges callback queries, and fans `/api/events` back out through Telegram. The daemon polls relay `/api/messages`, writes routed messages into per-agent inbox queues, and creates launch requests for sleeping adapters. It also posts `/api/hosts` heartbeats and drains `/api/commands` for safe daemon-level actions. Feishu/Lark callbacks also enter through the relay and then follow the same `/api/messages` path. Adapter processes launched by the daemon only drain their inbox, which keeps remote interaction independent of Codex or any other specific adapter.
 
-If you run a single adapter without the daemon, only one process can hold the Telegram long-poll cursor; the others must yield. The standalone fallback resolution order is:
+If you run without a relay transport, direct Telegram polling remains a standalone fallback. Only one process can hold the Telegram long-poll cursor; the others must yield. The fallback resolution order is:
 
 1. `transports[N].pollerAgentId` (per-transport config).
 2. `config.routing.telegramPollerAgentId` (global).
