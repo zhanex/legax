@@ -48,6 +48,8 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 - `POST /api/handoffs`
 - `GET /api/handoffs/:id`
 - `POST /api/handoffs/:id/transition`
+- `POST /api/artifacts`
+- `GET /api/artifacts/:id`
 - `POST /api/hosts`
 - `GET /api/hosts`
 - `POST /api/commands`

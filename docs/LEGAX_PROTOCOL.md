@@ -93,7 +93,18 @@ Relay-owned portable sessions use these desktop-authenticated endpoints:
 
 Lease-protected writes use two fences. `fencingToken` is monotonically increasing per generation and rejects stale owners after reclaim. `leaseToken` is the opaque secret returned to the active holder. A stale host, stale fencing token, or stale lease token returns `409` and does not mutate the generation.
 
-Handoff transitions are ordered: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. Forks preserve parent generation immutability and link the child with `baseGenerationId`.
+Handoff transitions are ordered: `requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`. `failed` is an explicit terminal failure state. The `checkpointed` transition can include `artifactId`, which tells the receiving host which encrypted checkpoint to fetch. Forks preserve parent generation immutability and link the child with `baseGenerationId`; fork creation can also carry `artifactId` through the child generation's `checkpoint.artifactId`.
+
+## Checkpoint Artifacts
+
+Checkpoint bundles use schema `legax.checkpoint/1`. A daemon creates the bundle locally, filters unsafe files, encrypts the JSON payload with AES-256-GCM, and wraps a per-artifact data key for authorized daemon devices with X25519, HKDF-SHA256, and AES-256-GCM. The relay never receives plaintext file content.
+
+Desktop-authenticated artifact APIs:
+
+- `POST /api/artifacts`: store an encrypted checkpoint artifact record. Requests containing plaintext fields such as `plaintext`, `bundle`, `payload`, `files`, or `content` are rejected.
+- `GET /api/artifacts/:id`: read encrypted artifact metadata, ciphertext, and wrapped keys.
+
+Default local bundle creation excludes credential files, private keys, database files, symlinks, binary files, oversized files, absolute paths, and path traversal. Restore validates every path before writing, rejects symlink escapes, verifies content hashes, and refuses to overwrite conflicting local files unless the caller explicitly opts into overwrite behavior. Device revocation prevents future key wrapping for that device; historical artifacts already wrapped for that key remain readable by holders of the matching private key.
 
 ## Worktree-Lite
 

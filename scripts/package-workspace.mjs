@@ -8,6 +8,7 @@ const repoRoot = path.resolve(path.dirname(__filename), "..");
 
 const LIB_FILES = [
   "adapter-contract.mjs",
+  "checkpoint-artifacts.mjs",
   "legax-protocol.mjs",
   "codex-features.mjs",
   "inbound-transports.mjs",

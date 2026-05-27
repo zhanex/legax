@@ -51,7 +51,7 @@ Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式
 | `inbox` | 未来用于 relay 路由和 workflow 编排的标准化入站项。 |
 | `commands` | relay 拥有的命令记录，可由手机、Telegram、飞书/Lark、workflow action 或桌面工具创建，只能由符合条件的 daemon host 执行。 |
 | `events` | relay metadata event stream，用于记录 append/update 路径。它和 per-session 的 Agent 可见 event 队列分开。 |
-| `artifacts` | 未来由 workflow 生成或引用的 artifact 元数据。 |
+| `artifacts` | 由 handoff、fork 和 workflow 生成或引用的加密 checkpoint artifact 记录。 |
 | `workflowDefinitions` | 未来 relay 侧 workflow 定义。 |
 | `workflowRuns` | 未来 relay 侧 workflow run 状态。 |
 
@@ -172,6 +172,8 @@ lease 状态只能是 `active`、`released`、`expired` 或 `reclaimed`。
   "generationId": "gen_abc123",
   "fromHostId": "host-a",
   "toHostId": "host-b",
+  "checkpointArtifactId": "artifact_abc123",
+  "artifactIds": ["artifact_abc123"],
   "state": "requested",
   "transitions": [
     { "state": "requested", "at": "2026-05-26T00:00:00.000Z" }
@@ -182,7 +184,51 @@ lease 状态只能是 `active`、`released`、`expired` 或 `reclaimed`。
 }
 ```
 
-`GET /api/handoffs/:id` 读取当前 handoff 记录。`POST /api/handoffs/:id/transition` 只接受文档化顺序：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。重复提交相同 transition 是幂等的，不会追加重复 event。每次新的 transition 都会追加 `handoff.<state>` metadata event，让 handoff 进度保持可审计。
+`GET /api/handoffs/:id` 读取当前 handoff 记录。`POST /api/handoffs/:id/transition` 只接受文档化顺序：`requested -> checkpointed -> uploaded -> released -> claimed -> restored -> resumed`。`failed` 是显式 terminal failure 状态。`checkpointed` transition 可以携带 `artifactId`，relay 会把它保存为 `checkpointArtifactId` 并追加到 `artifactIds`，让目标 host 知道要拉取哪个加密 checkpoint。重复提交相同 transition 是幂等的，不会追加重复 event。每次新的 transition 都会追加 `handoff.<state>` metadata event，让 handoff 进度保持可审计。
+
+## Artifact 记录
+
+checkpoint artifact 会在上传前完成加密。relay 只保存 ciphertext 和 metadata：
+
+```json
+{
+  "id": "artifact_abc123",
+  "sessionId": "default",
+  "generationId": "gen_abc123",
+  "type": "checkpoint.bundle",
+  "state": "available",
+  "metadata": {
+    "schema": "legax.checkpoint/1",
+    "sessionId": "default",
+    "generationId": "gen_abc123",
+    "fileCount": 2
+  },
+  "encryption": {
+    "algorithm": "AES-256-GCM",
+    "keyWrap": "X25519-HKDF-SHA256+A256GCM"
+  },
+  "ciphertext": {
+    "algorithm": "AES-256-GCM",
+    "iv": "base64url",
+    "tag": "base64url",
+    "ciphertext": "base64url"
+  },
+  "wrappedKeys": [
+    {
+      "recipientKid": "host-key-1",
+      "algorithm": "X25519-HKDF-SHA256+A256GCM",
+      "ephemeralPublicKey": { "kty": "OKP", "crv": "X25519", "x": "base64url" },
+      "iv": "base64url",
+      "tag": "base64url",
+      "ciphertext": "base64url"
+    }
+  ],
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "updatedAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+`POST /api/artifacts` 会拒绝 `plaintext`、`bundle`、`payload`、`files` 或 `content` 等明文字段。`GET /api/artifacts/:id` 返回加密记录，以便已授权 daemon 在本地解开 data key，并在校验路径和 hash 后恢复 checkpoint。
 
 ## Host 记录
 

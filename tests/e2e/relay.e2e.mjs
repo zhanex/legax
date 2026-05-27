@@ -506,6 +506,7 @@ test("self-hosted relay manages portable sessions, generations, leases, forks, a
   });
   assert.equal(forked.generation.baseGenerationId, generationResponse.generation.id);
   assert.equal(forked.generation.hostId, "host-e");
+  assert.equal(forked.generation.checkpoint.artifactId, "checkpoint-1");
   const parentAfterFork = await fetchJson(`${relay.baseUrl}/api/generations/${generationResponse.generation.id}`, {
     headers: { "x-legax-secret": relay.desktopSecret },
     skipRelayCookie: true
@@ -530,9 +531,16 @@ test("self-hosted relay manages portable sessions, generations, leases, forks, a
       method: "POST",
       headers: desktopHeaders,
       skipRelayCookie: true,
-      body: JSON.stringify({ state })
+      body: JSON.stringify({
+        state,
+        ...(state === "checkpointed" ? { artifactId: "checkpoint-1" } : {})
+      })
     });
     assert.equal(transitioned.handoff.state, state);
+    if (state === "checkpointed") {
+      assert.equal(transitioned.handoff.checkpointArtifactId, "checkpoint-1");
+      assert.deepEqual(transitioned.handoff.artifactIds, ["checkpoint-1"]);
+    }
     const retried = await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}/transition`, {
       method: "POST",
       headers: desktopHeaders,
@@ -547,6 +555,7 @@ test("self-hosted relay manages portable sessions, generations, leases, forks, a
     skipRelayCookie: true
   });
   assert.equal(readHandoff.handoff.state, "resumed");
+  assert.equal(readHandoff.handoff.checkpointArtifactId, "checkpoint-1");
   assert.equal(readHandoff.handoff.transitions.length, 7);
 
   const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
@@ -600,6 +609,129 @@ test("self-hosted relay manages portable sessions, generations, leases, forks, a
     }),
     { status: 409 }
   );
+});
+
+test("self-hosted relay stores checkpoint artifacts as ciphertext metadata only", async (t) => {
+  const relay = await startRelay(t, { sessionId: "artifact-e2e" });
+  const desktopHeaders = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/artifacts`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        artifactId: "artifact-plaintext",
+        sessionId: "artifact-e2e",
+        type: "checkpoint.bundle",
+        plaintext: "plaintext-secret"
+      })
+    }),
+    { status: 400 }
+  );
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/artifacts`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        artifactId: "artifact-metadata-plaintext",
+        sessionId: "artifact-e2e",
+        type: "checkpoint.bundle",
+        metadata: { files: [{ path: "src/app.txt", content: "plaintext-secret" }] },
+        encryption: { algorithm: "AES-256-GCM" },
+        ciphertext: { algorithm: "AES-256-GCM", iv: "iv", tag: "tag", ciphertext: "ciphertext" },
+        wrappedKeys: [{ recipientKid: "host-key-1", ciphertext: "wrapped-key" }]
+      })
+    }),
+    { status: 400 }
+  );
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/artifacts`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        artifactId: "artifact-ciphertext-plaintext",
+        sessionId: "artifact-e2e",
+        type: "checkpoint.bundle",
+        metadata: { schema: "legax.checkpoint/1" },
+        encryption: { algorithm: "AES-256-GCM" },
+        ciphertext: { algorithm: "AES-256-GCM", iv: "iv", tag: "tag", ciphertext: "ciphertext", files: ["plaintext-secret"] },
+        wrappedKeys: [{ recipientKid: "host-key-1", ciphertext: "wrapped-key" }]
+      })
+    }),
+    { status: 400 }
+  );
+
+  const uploaded = await fetchJson(`${relay.baseUrl}/api/artifacts`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      artifactId: "artifact-checkpoint-e2e",
+      sessionId: "artifact-e2e",
+      generationId: "gen-artifact-e2e",
+      type: "checkpoint.bundle",
+      idempotencyKey: "artifact-idem-1",
+      metadata: {
+        schema: "legax.checkpoint/1",
+        sessionId: "artifact-e2e",
+        generationId: "gen-artifact-e2e",
+        fileCount: 1
+      },
+      encryption: {
+        algorithm: "AES-256-GCM",
+        keyWrap: "X25519-HKDF-SHA256+A256GCM"
+      },
+      ciphertext: {
+        algorithm: "AES-256-GCM",
+        iv: "base64url-iv",
+        tag: "base64url-tag",
+        ciphertext: Buffer.from("ciphertext-not-plaintext").toString("base64url")
+      },
+      wrappedKeys: [{
+        recipientKid: "host-key-1",
+        algorithm: "X25519-HKDF-SHA256+A256GCM",
+        ephemeralPublicKey: { kty: "OKP", crv: "X25519", x: "ephemeral" },
+        iv: "wrap-iv",
+        tag: "wrap-tag",
+        ciphertext: "wrapped-key"
+      }]
+    })
+  });
+  assert.equal(uploaded.artifact.id, "artifact-checkpoint-e2e");
+  assert.equal(uploaded.artifact.type, "checkpoint.bundle");
+
+  const duplicate = await fetchJson(`${relay.baseUrl}/api/artifacts`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      artifactId: "artifact-checkpoint-e2e",
+      sessionId: "artifact-e2e",
+      generationId: "gen-artifact-e2e",
+      type: "checkpoint.bundle",
+      idempotencyKey: "artifact-idem-1",
+      metadata: uploaded.artifact.metadata,
+      encryption: uploaded.artifact.encryption,
+      ciphertext: uploaded.artifact.ciphertext,
+      wrappedKeys: uploaded.artifact.wrappedKeys
+    })
+  });
+  assert.equal(duplicate.idempotent, true);
+
+  const fetched = await fetchJson(`${relay.baseUrl}/api/artifacts/artifact-checkpoint-e2e`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(fetched.artifact.metadata.fileCount, 1);
+  const storeText = await fs.readFile(relay.storePath, "utf8");
+  assert.doesNotMatch(storeText, /plaintext-secret/);
+  assert.match(storeText, new RegExp(Buffer.from("ciphertext-not-plaintext").toString("base64url")));
 });
 
 test("self-hosted relay migrates legacy relay store version 1 files", async (t) => {
