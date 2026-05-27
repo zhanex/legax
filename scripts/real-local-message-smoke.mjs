@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomBytes, randomInt } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -10,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const pluginRoot = path.resolve(__dirname, "..");
 const dataDir = path.resolve(pluginRoot, "data");
 const sessionId = `real-local-${Date.now()}`;
-const desktopSecret = `desktop-${Math.random().toString(16).slice(2)}`;
+const desktopSecret = `desktop-${randomBytes(18).toString("base64url")}`;
 const timeoutMs = Number(process.env.LEGAX_REAL_MESSAGE_TIMEOUT_MS ?? 120000);
 const pollIntervalMs = 500;
 let phoneCookie = "";
@@ -99,7 +100,7 @@ async function fetchJson(url, options = {}) {
 }
 
 async function pairBrowser(relayBaseUrl) {
-  const code = Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0");
+  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   await fetchJson(`${relayBaseUrl}/api/pairing-codes`, {
     method: "POST",
     headers: {

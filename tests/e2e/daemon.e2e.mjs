@@ -1116,7 +1116,7 @@ async function startFakeOpenCodeServer(t, replyText) {
       sendJsonResponse(response, { error: "not found" }, 404);
     } catch (error) {
       response.statusCode = 500;
-      response.end(error.stack);
+      response.end("internal server error");
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
