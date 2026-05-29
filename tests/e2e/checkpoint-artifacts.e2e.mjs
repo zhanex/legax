@@ -12,7 +12,7 @@ import {
   generateCheckpointDeviceKeyPair,
   restoreCheckpointBundle
 } from "../../scripts/lib/checkpoint-artifacts.mjs";
-import { dataDir } from "./helpers.mjs";
+import { dataDir, fetchJson, startRelay } from "./helpers.mjs";
 
 function runGit(root, args) {
   const result = spawnSync("git", args, {
@@ -213,4 +213,147 @@ test("checkpoint restore rejects traversal and symlink escape attempts", async (
   };
   assert.throws(() => restoreCheckpointBundle(maliciousFinalSymlink, { targetDir: target }), /symlink/i);
   assert.equal(await fs.readFile(finalLinkTarget, "utf8"), "outside\n");
+});
+
+test("checkpoint handoff uploads encrypted artifact and restores on target host", async (t) => {
+  const relay = await startRelay(t, { sessionId: "checkpoint-handoff-e2e" });
+  const sourceRoot = await tempDir("checkpoint-handoff-source");
+  const targetRoot = await tempDir("checkpoint-handoff-target");
+  t.after(async () => {
+    await fs.rm(sourceRoot, { recursive: true, force: true });
+    await fs.rm(targetRoot, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(sourceRoot, "src"), { recursive: true });
+  await fs.writeFile(path.join(sourceRoot, "src", "handoff.txt"), "before\n", "utf8");
+  runGit(sourceRoot, ["init"]);
+  runGit(sourceRoot, ["add", "src/handoff.txt"]);
+  runGit(sourceRoot, ["-c", "user.name=Legax E2E", "-c", "user.email=legax@example.test", "commit", "-m", "init"]);
+  await fs.writeFile(path.join(sourceRoot, "src", "handoff.txt"), "after handoff\n", "utf8");
+
+  const headers = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+  await fetchJson(`${relay.baseUrl}/api/sessions`, {
+    method: "POST",
+    headers,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      title: "Checkpoint handoff",
+      selectedAgentId: "gemini-cli"
+    })
+  });
+  const generationResponse = await fetchJson(`${relay.baseUrl}/api/generations`, {
+    method: "POST",
+    headers,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      hostId: "source-host",
+      adapterId: "gemini-cli",
+      worktree: { path: sourceRoot },
+      nativeSession: { provider: "gemini", id: "source-native-session" }
+    })
+  });
+  const leaseResponse = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      generationId: generationResponse.generation.id,
+      hostId: "source-host",
+      ttlMs: 30000
+    })
+  });
+
+  const recipient = generateCheckpointDeviceKeyPair({ kid: "target-host-key" });
+  const bundle = createCheckpointBundle({
+    rootDir: sourceRoot,
+    sessionId: relay.sessionId,
+    generationId: generationResponse.generation.id,
+    include: ["src/handoff.txt"],
+    workflowState: { runId: "wf-handoff", stepId: "handoff" },
+    testState: { command: "npm test", exitCode: 0 },
+    environment: { restore: "restore into managed target worktree" }
+  });
+  const encrypted = encryptCheckpointBundle(bundle, {
+    artifactId: "checkpoint-handoff-artifact",
+    recipients: [recipient.publicKey]
+  });
+
+  await fetchJson(`${relay.baseUrl}/api/artifacts`, {
+    method: "POST",
+    headers,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      artifactId: encrypted.id,
+      sessionId: relay.sessionId,
+      generationId: generationResponse.generation.id,
+      type: encrypted.type,
+      leaseHostId: "source-host",
+      fencingToken: leaseResponse.lease.fencingToken,
+      leaseToken: leaseResponse.lease.token,
+      metadata: encrypted.metadata,
+      encryption: encrypted.encryption,
+      ciphertext: encrypted.ciphertext,
+      wrappedKeys: encrypted.wrappedKeys
+    })
+  });
+
+  const handoff = await fetchJson(`${relay.baseUrl}/api/handoffs`, {
+    method: "POST",
+    headers,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      generationId: generationResponse.generation.id,
+      fromHostId: "source-host",
+      toHostId: "target-host"
+    })
+  });
+  for (const state of ["checkpointed", "uploaded", "released", "claimed"]) {
+    await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}/transition`, {
+      method: "POST",
+      headers,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        state,
+        ...(state === "checkpointed" ? { artifactId: encrypted.id } : {})
+      })
+    });
+  }
+
+  const fetched = await fetchJson(`${relay.baseUrl}/api/artifacts/${encrypted.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  const restored = decryptCheckpointArtifact(fetched.artifact, {
+    privateKey: recipient.privateKey,
+    expectedMetadata: {
+      sessionId: relay.sessionId,
+      generationId: generationResponse.generation.id,
+      type: "checkpoint.bundle"
+    }
+  });
+  const restoreReport = restoreCheckpointBundle(restored, { targetDir: targetRoot });
+  assert.deepEqual(restoreReport.written.map((entry) => entry.path), ["src/handoff.txt"]);
+  assert.equal(await fs.readFile(path.join(targetRoot, "src", "handoff.txt"), "utf8"), "after handoff\n");
+
+  for (const state of ["restored", "resumed"]) {
+    await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}/transition`, {
+      method: "POST",
+      headers,
+      skipRelayCookie: true,
+      body: JSON.stringify({ state })
+    });
+  }
+  const readHandoff = await fetchJson(`${relay.baseUrl}/api/handoffs/${handoff.handoff.id}`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(readHandoff.handoff.state, "resumed");
+  assert.equal(readHandoff.handoff.checkpointArtifactId, encrypted.id);
 });
