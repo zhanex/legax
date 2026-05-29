@@ -1574,6 +1574,28 @@ function artifactWrappedKeyRecord(value) {
   };
 }
 
+function artifactWrappedKeyDeviceId(store, wrappedKey) {
+  const recipientKid = relayString(wrappedKey.recipientKid, "", 160);
+  if (store.devices[recipientKid]) return recipientKid;
+  if (recipientKid.startsWith("device:")) {
+    const deviceId = recipientKid.slice("device:".length);
+    if (store.devices[deviceId]) return deviceId;
+  }
+  for (const device of Object.values(store.devices)) {
+    if (relayString(device?.devicePublicKey?.kid, "", 160) === recipientKid) return device.id;
+  }
+  return "";
+}
+
+function rejectRevokedArtifactWrappedKeys(store, wrappedKeys) {
+  for (const wrappedKey of wrappedKeys) {
+    const deviceId = artifactWrappedKeyDeviceId(store, wrappedKey);
+    if (deviceId && store.devices[deviceId]?.revokedAt) {
+      throw relayHttpError(409, "artifact wrapped key targets a revoked device");
+    }
+  }
+}
+
 function createCheckpointArtifact(store, body) {
   rejectPlaintextArtifactFields(body);
   const id = body.artifactId || body.id
@@ -1596,8 +1618,15 @@ function createCheckpointArtifact(store, body) {
   if (generationId && metadata.generationId && metadata.generationId !== generationId) {
     throw relayHttpError(400, "artifact metadata generation mismatch");
   }
+  if (generationId) {
+    const generation = store.generations[generationId];
+    if (!generation) throw relayHttpError(404, "artifact generation not found");
+    if (generation.sessionId !== sessionId) throw relayHttpError(409, "artifact generation does not belong to session");
+    requireCurrentLease(store, generationId, body);
+  }
   const wrappedKeys = Array.isArray(body.wrappedKeys) ? body.wrappedKeys.map(artifactWrappedKeyRecord) : [];
   if (wrappedKeys.length === 0) throw relayHttpError(400, "artifact requires wrappedKeys");
+  rejectRevokedArtifactWrappedKeys(store, wrappedKeys);
   const now = new Date().toISOString();
   const artifact = {
     id,
@@ -2075,6 +2104,14 @@ function recordWorkflowStepResult(store, runId, stepId, body) {
   }
   if (step.state !== "running") throw relayHttpError(409, `workflow step is ${step.state}`);
   if (step.commandId !== commandId) throw relayHttpError(409, "stale workflow step command");
+  const action = lpsActionById(step.commandRef);
+  if (action?.requiresLease) {
+    requireCurrentLease(store, run.generationId, {
+      hostId: body.leaseHostId ?? body.hostId,
+      fencingToken: body.fencingToken,
+      leaseToken: body.leaseToken ?? body.token
+    });
+  }
   try {
     validateLpsActionResult(step.commandRef, state, body);
   } catch (error) {
@@ -2114,11 +2151,15 @@ function recordWorkflowStepResultFromCommand(store, command) {
   const workflowRunId = command?.payload?.workflowRunId;
   const stepId = command?.payload?.stepId;
   if (!workflowRunId || !stepId) return null;
-  if (!store.workflowRuns[workflowRunId]) return null;
+  const run = store.workflowRuns[workflowRunId];
+  if (!run) return null;
   const result = isRecord(command.result) ? command.result : {};
   return recordWorkflowStepResult(store, workflowRunId, stepId, {
     commandId: command.id,
     state: command.state,
+    leaseHostId: run.leaseHostId || command.claimedBy || command.targetHostId,
+    fencingToken: run.fencingToken,
+    leaseToken: command.leaseToken || run.leaseToken,
     result,
     evidence: isRecord(result.evidence) ? result.evidence : null,
     error: command.error
@@ -2207,6 +2248,108 @@ function enabledFeishuTransports() {
 function enabledTelegramTransports() {
   return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
     .filter((transport) => transport?.enabled !== false && transport?.type === "telegram");
+}
+
+function enabledWebhookTransports() {
+  return (Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : [])
+    .filter((transport) => transport?.enabled !== false && transport?.type === "webhook");
+}
+
+function webhookTransportFromRequest(url) {
+  const name = url.searchParams.get("transport");
+  const transports = enabledWebhookTransports();
+  if (name) return transports.find((transport) => String(transport.name ?? "webhook") === name);
+  return transports[0];
+}
+
+function webhookDefaultTarget(transport) {
+  const configured = transport?.defaultTarget ?? RAW_CONFIG.routing?.defaultTarget;
+  if (!configured || configured === "none") return "";
+  if (configured === "self") return "legax-daemon";
+  return String(configured);
+}
+
+function webhookAllowedTargets(transport) {
+  return relayStringList(transport?.allowedTargets ?? transport?.targetAgentIds ?? transport?.targets)
+    .map((target) => normalizeAgentId(target))
+    .filter(Boolean);
+}
+
+function webhookTargetAgentId(body, transport) {
+  const requested = normalizeAgentId(body.targetAgentId ?? body.agentId ?? body.target);
+  const fallback = normalizeAgentId(webhookDefaultTarget(transport));
+  const allowedTargets = webhookAllowedTargets(transport);
+  const target = requested || fallback;
+  if (allowedTargets.length > 0) {
+    if (!target) return "";
+    if (!allowedTargets.includes(target)) throw relayHttpError(403, "webhook target is not allowed");
+    return target;
+  }
+  if (transport?.allowTargetOverride === true) return target;
+  if (!fallback) throw relayHttpError(403, "webhook defaultTarget or allowedTargets is required");
+  if (requested && requested !== fallback) throw relayHttpError(403, "webhook target is not allowed");
+  return fallback;
+}
+
+function verifyWebhookEvent(req, transport) {
+  const expected = String(transport?.inboundSecret ?? transport?.secret ?? transport?.webhookSecret ?? "");
+  const headerSecret = String(req.headers["x-legax-secret"] ?? "");
+  const bearer = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+  return safeEqual(headerSecret, expected) || safeEqual(bearer, expected);
+}
+
+function webhookMessageValue(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.slice(0, 1000);
+  return undefined;
+}
+
+function webhookMetadata(value) {
+  if (!isRecord(value)) return undefined;
+  const metadata = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(key)) continue;
+    const normalized = webhookMessageValue(item);
+    if (normalized !== undefined) metadata[key] = normalized;
+    if (Object.keys(metadata).length >= 40) break;
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function webhookIncomingMessage(body, transport) {
+  if (!isRecord(body)) return null;
+  const targetAgentId = webhookTargetAgentId(body, transport);
+  const message = {
+    id: webhookMessageValue(body.id) ?? `webhook:${crypto.randomUUID()}`,
+    type: webhookMessageValue(body.type) ?? (body.action ? "control" : "text"),
+    transport: "webhook",
+    source: "webhook",
+    targetAgentId,
+    text: body.text === undefined ? "" : String(body.text)
+  };
+  for (const key of [
+    "action",
+    "selectedAgentId",
+    "targetProjectAgentId",
+    "projectRef",
+    "selectedProjectRef",
+    "threadRef",
+    "projectPath",
+    "cwd",
+    "mode",
+    "requestId",
+    "sourceRequestId",
+    "decision",
+    "page"
+  ]) {
+    const value = webhookMessageValue(body[key]);
+    if (value !== undefined) message[key] = value;
+  }
+  const metadata = webhookMetadata(body.metadata);
+  if (metadata) message.metadata = metadata;
+  return message;
 }
 
 function telegramTransportFromRequest(url) {
@@ -2429,6 +2572,21 @@ async function dispatchRelayTelegramEvent(event) {
     }
   }
   return results;
+}
+
+function recordTransportDeliveryResults(store, event, results) {
+  for (const result of Array.isArray(results) ? results : []) {
+    if (result?.ok !== false) continue;
+    appendRelayStoreEvent(store, "transport.delivery.failed", {
+      sessionId: event.sessionId,
+      eventId: event.id,
+      eventSeq: event.seq,
+      agentId: event.agentId,
+      transport: relayString(result.transport, "", 80),
+      transportType: relayString(result.type, "", 80),
+      error: relayString(result.error, "", 500)
+    });
+  }
 }
 
 function feishuTransportFromRequest(url) {
@@ -6068,6 +6226,11 @@ async function route(req, res) {
     saveStore(store);
     appendAudit("desktop->phone", event);
     const outbound = await dispatchRelayTelegramEvent(event);
+    if (outbound.some((result) => result.ok === false)) {
+      const deliveryStore = loadStore();
+      recordTransportDeliveryResults(deliveryStore, event, outbound);
+      saveStore(deliveryStore);
+    }
     sendJson(res, 200, { ok: true, event, outbound });
     return;
   }
@@ -6133,6 +6296,26 @@ async function route(req, res) {
       duplicate: result.duplicate === true,
       reason: result.reason
     });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/webhook/events") {
+    const body = await readJsonBody(req);
+    const transport = webhookTransportFromRequest(url);
+    if (!transport || !verifyWebhookEvent(req, transport)) {
+      sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    const messageBody = webhookIncomingMessage(body, transport);
+    if (!messageBody) {
+      sendJson(res, 200, { ok: true, ignored: true });
+      return;
+    }
+    const store = loadStore();
+    const { message } = appendSessionMessage(store, url.searchParams.get("sessionId") ?? body.sessionId ?? transport.sessionId, messageBody);
+    saveStore(store);
+    appendAudit("phone->desktop", message);
+    sendJson(res, 200, { ok: true, message });
     return;
   }
 

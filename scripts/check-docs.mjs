@@ -36,6 +36,55 @@ function exists(relPath) {
   return fs.existsSync(path.join(root, relPath));
 }
 
+function stripMarkdownCode(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\n]*`/g, "");
+}
+
+function isExternalReference(target) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(target)
+    || target.startsWith("#")
+    || target.startsWith("/")
+    || target.startsWith("//");
+}
+
+function localReferencePath(target) {
+  const clean = String(target ?? "").trim().replace(/^<|>$/g, "");
+  if (!clean || isExternalReference(clean)) return "";
+  const withoutFragment = clean.split("#")[0].split("?")[0];
+  return withoutFragment.trim();
+}
+
+function collectLocalReferences(text) {
+  const body = stripMarkdownCode(text);
+  const references = [];
+
+  for (const match of body.matchAll(/!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+["'][^)]*["'])?\)/g)) {
+    const target = localReferencePath(match[1]);
+    if (target) references.push(target);
+  }
+
+  for (const match of body.matchAll(/<(?:a|img)\b[^>]*\b(?:href|src)=["']([^"']+)["'][^>]*>/gi)) {
+    const target = localReferencePath(match[1]);
+    if (target) references.push(target);
+  }
+
+  return references;
+}
+
+function shouldCheckLocalReferences(relPath) {
+  return relPath.endsWith(".md") && !/^packages\/[^/]+\/README(?:\.zh-CN)?\.md$/.test(relPath);
+}
+
+function localReferenceExists(fromRelPath, target) {
+  const fromDir = path.dirname(path.join(root, fromRelPath));
+  const resolved = path.resolve(fromDir, target);
+  const relativeTarget = path.relative(root, resolved);
+  if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) return false;
+  return fs.existsSync(resolved);
+}
+
 function walk(dir) {
   const results = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -95,6 +144,14 @@ for (const filePath of scannedFiles) {
   const isEnglishConfigExample = configExampleFiles.includes(filePath) && !isChineseFile;
   if ((isEnglishDoc || isEnglishConfigExample) && cjkPattern.test(text)) {
     errors.push(`${relPath} is an English file but contains CJK prose`);
+  }
+
+  if (shouldCheckLocalReferences(relPath)) {
+    for (const target of collectLocalReferences(text)) {
+      if (!localReferenceExists(relPath, target)) {
+        errors.push(`${relPath} has a broken local reference to ${target}`);
+      }
+    }
   }
 }
 

@@ -667,41 +667,81 @@ test("self-hosted relay stores checkpoint artifacts as ciphertext metadata only"
     { status: 400 }
   );
 
-  const uploaded = await fetchJson(`${relay.baseUrl}/api/artifacts`, {
+  const generationResponse = await fetchJson(`${relay.baseUrl}/api/generations`, {
     method: "POST",
     headers: desktopHeaders,
     skipRelayCookie: true,
     body: JSON.stringify({
-      artifactId: "artifact-checkpoint-e2e",
       sessionId: "artifact-e2e",
-      generationId: "gen-artifact-e2e",
-      type: "checkpoint.bundle",
-      idempotencyKey: "artifact-idem-1",
-      metadata: {
-        schema: "legax.checkpoint/1",
-        sessionId: "artifact-e2e",
-        generationId: "gen-artifact-e2e",
-        fileCount: 1
-      },
-      encryption: {
-        algorithm: "AES-256-GCM",
-        keyWrap: "X25519-HKDF-SHA256+A256GCM"
-      },
-      ciphertext: {
-        algorithm: "AES-256-GCM",
-        iv: "base64url-iv",
-        tag: "base64url-tag",
-        ciphertext: Buffer.from("ciphertext-not-plaintext").toString("base64url")
-      },
-      wrappedKeys: [{
-        recipientKid: "host-key-1",
-        algorithm: "X25519-HKDF-SHA256+A256GCM",
-        ephemeralPublicKey: { kty: "OKP", crv: "X25519", x: "ephemeral" },
-        iv: "wrap-iv",
-        tag: "wrap-tag",
-        ciphertext: "wrapped-key"
-      }]
+      hostId: "artifact-host",
+      adapterId: "gemini-cli",
+      nativeSession: { provider: "gemini", id: "native-artifact-session" }
     })
+  });
+  const leaseResponse = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: "artifact-e2e",
+      generationId: generationResponse.generation.id,
+      hostId: "artifact-host",
+      ttlMs: 30000
+    })
+  });
+  const artifactBody = {
+    artifactId: "artifact-checkpoint-e2e",
+    sessionId: "artifact-e2e",
+    generationId: generationResponse.generation.id,
+    type: "checkpoint.bundle",
+    idempotencyKey: "artifact-idem-1",
+    leaseHostId: "artifact-host",
+    fencingToken: leaseResponse.lease.fencingToken,
+    leaseToken: leaseResponse.lease.token,
+    metadata: {
+      schema: "legax.checkpoint/1",
+      sessionId: "artifact-e2e",
+      generationId: generationResponse.generation.id,
+      fileCount: 1
+    },
+    encryption: {
+      algorithm: "AES-256-GCM",
+      keyWrap: "X25519-HKDF-SHA256+A256GCM"
+    },
+    ciphertext: {
+      algorithm: "AES-256-GCM",
+      iv: "base64url-iv",
+      tag: "base64url-tag",
+      ciphertext: Buffer.from("ciphertext-not-plaintext").toString("base64url")
+    },
+    wrappedKeys: [{
+      recipientKid: "host-key-1",
+      algorithm: "X25519-HKDF-SHA256+A256GCM",
+      ephemeralPublicKey: { kty: "OKP", crv: "X25519", x: "ephemeral" },
+      iv: "wrap-iv",
+      tag: "wrap-tag",
+      ciphertext: "wrapped-key"
+    }]
+  };
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/artifacts`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        ...artifactBody,
+        leaseToken: "stale-artifact-lease"
+      })
+    }),
+    { status: 409 }
+  );
+
+  const uploaded = await fetchJson(`${relay.baseUrl}/api/artifacts`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify(artifactBody)
   });
   assert.equal(uploaded.artifact.id, "artifact-checkpoint-e2e");
   assert.equal(uploaded.artifact.type, "checkpoint.bundle");
@@ -711,11 +751,7 @@ test("self-hosted relay stores checkpoint artifacts as ciphertext metadata only"
     headers: desktopHeaders,
     skipRelayCookie: true,
     body: JSON.stringify({
-      artifactId: "artifact-checkpoint-e2e",
-      sessionId: "artifact-e2e",
-      generationId: "gen-artifact-e2e",
-      type: "checkpoint.bundle",
-      idempotencyKey: "artifact-idem-1",
+      ...artifactBody,
       metadata: uploaded.artifact.metadata,
       encryption: uploaded.artifact.encryption,
       ciphertext: uploaded.artifact.ciphertext,
@@ -732,6 +768,94 @@ test("self-hosted relay stores checkpoint artifacts as ciphertext metadata only"
   const storeText = await fs.readFile(relay.storePath, "utf8");
   assert.doesNotMatch(storeText, /plaintext-secret/);
   assert.match(storeText, new RegExp(Buffer.from("ciphertext-not-plaintext").toString("base64url")));
+});
+
+test("self-hosted relay rejects checkpoint key wraps for revoked devices", async (t) => {
+  const relay = await startRelay(t, { sessionId: "artifact-revoked-device-e2e" });
+  const desktopHeaders = {
+    "content-type": "application/json",
+    "x-legax-secret": relay.desktopSecret
+  };
+
+  await fetchJson(`${relay.baseUrl}/api/pairing-codes`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({ code: "135790", sessionId: relay.sessionId, label: "revoked key wrap device" })
+  });
+  const pairResponse = await fetch(`${relay.baseUrl}/api/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code: "135790",
+      label: "revoked key wrap device",
+      devicePublicKey: { kty: "OKP", crv: "X25519", x: "revoked-device-public-key", kid: "revoked-device-key" }
+    })
+  });
+  assert.equal(pairResponse.status, 200);
+  const paired = await pairResponse.json();
+  await fetchJson(`${relay.baseUrl}/api/devices/${encodeURIComponent(paired.device.id)}`, {
+    method: "DELETE",
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+
+  const generationResponse = await fetchJson(`${relay.baseUrl}/api/generations`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      hostId: "artifact-device-host",
+      adapterId: "gemini-cli"
+    })
+  });
+  const leaseResponse = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: desktopHeaders,
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      generationId: generationResponse.generation.id,
+      hostId: "artifact-device-host",
+      ttlMs: 30000
+    })
+  });
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/artifacts`, {
+      method: "POST",
+      headers: desktopHeaders,
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        artifactId: "artifact-revoked-device",
+        sessionId: relay.sessionId,
+        generationId: generationResponse.generation.id,
+        type: "checkpoint.bundle",
+        leaseHostId: "artifact-device-host",
+        fencingToken: leaseResponse.lease.fencingToken,
+        leaseToken: leaseResponse.lease.token,
+        metadata: {
+          schema: "legax.checkpoint/1",
+          sessionId: relay.sessionId,
+          generationId: generationResponse.generation.id
+        },
+        encryption: { algorithm: "AES-256-GCM" },
+        ciphertext: {
+          algorithm: "AES-256-GCM",
+          iv: "base64url-iv",
+          tag: "base64url-tag",
+          ciphertext: "ciphertext"
+        },
+        wrappedKeys: [{
+          recipientKid: "revoked-device-key",
+          algorithm: "X25519-HKDF-SHA256+A256GCM",
+          ciphertext: "wrapped-key"
+        }]
+      })
+    }),
+    { status: 409 }
+  );
 });
 
 test("self-hosted relay validates restricted workflow definitions", async (t) => {
@@ -1208,6 +1332,88 @@ transports:
   assert.equal(afterIgnored.messages.length, 1);
 });
 
+test("self-hosted relay normalizes webhook actions into relay messages", async (t) => {
+  const relay = await startRelay(t, {
+    sessionId: "relay-webhook-inbox-e2e",
+    extraYaml: `
+transports:
+  - name: inbound-webhook
+    type: webhook
+    secret: webhook-secret
+    sessionId: relay-webhook-inbox-e2e
+    defaultTarget: gemini-cli
+    allowedTargets: claude-code,gemini-cli
+`
+  });
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/webhook/events?transport=inbound-webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      skipRelayCookie: true,
+      body: JSON.stringify({ text: "unauthorized webhook" })
+    }),
+    { status: 401 }
+  );
+
+  const delivered = await fetchJson(`${relay.baseUrl}/api/webhook/events?transport=inbound-webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": "webhook-secret"
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      type: "control",
+      action: "select_session",
+      targetAgentId: "claude-code",
+      threadRef: "claude-session-1",
+      admin: true,
+      arbitraryNested: { unsafe: true },
+      createdAt: "2000-01-01T00:00:00.000Z",
+      metadata: {
+        safeKey: "safe value",
+        nested: { unsafe: true },
+        "unsafe key": "dropped"
+      },
+      text: "/use claude-code claude-session-1"
+    })
+  });
+  assert.equal(delivered.message.transport, "webhook");
+  assert.equal(delivered.message.targetAgentId, "claude-code");
+  assert.equal(delivered.message.action, "select_session");
+  assert.equal(Object.hasOwn(delivered.message, "admin"), false);
+  assert.equal(Object.hasOwn(delivered.message, "arbitraryNested"), false);
+  assert.notEqual(delivered.message.createdAt, "2000-01-01T00:00:00.000Z");
+  assert.deepEqual(delivered.message.metadata, { safeKey: "safe value" });
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/webhook/events?transport=inbound-webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": "webhook-secret"
+      },
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        type: "control",
+        action: "select_session",
+        targetAgentId: "codex-cli",
+        threadRef: "codex-session-1",
+        text: "/use codex-cli codex-session-1"
+      })
+    }),
+    { status: 403 }
+  );
+
+  const desktopMessages = await fetchJson(`${relay.baseUrl}/api/messages?sessionId=${relay.sessionId}&after=0&agentId=claude-code`, {
+    headers: { "x-legax-secret": relay.desktopSecret },
+    skipRelayCookie: true
+  });
+  assert.equal(desktopMessages.messages.length, 1);
+  assert.equal(desktopMessages.messages[0].threadRef, "claude-session-1");
+});
+
 test("self-hosted relay polls Telegram and acknowledges callbacks", async (t) => {
   const telegram = await startRelayFakeTelegram(t);
   const relay = await startRelay(t, {
@@ -1284,6 +1490,52 @@ transports:
   });
 
   await telegram.waitForSend((body) => /relay outbound status/.test(body.text ?? ""));
+});
+
+test("self-hosted relay records Telegram outbound delivery failures", async (t) => {
+  const telegram = await startRelayFakeTelegram(t, {
+    sendMessageStatus: 429,
+    sendMessageBody: { ok: false, error_code: 429, description: "Too Many Requests: retry later" }
+  });
+  const relay = await startRelay(t, {
+    sessionId: "relay-telegram-failure-e2e",
+    extraYaml: `
+transports:
+  - name: telegram
+    type: telegram
+    enabled: true
+    polling: false
+    botToken: test-token
+    chatId: 42
+    apiBaseUrl: ${telegram.apiBaseUrl}
+    timeoutMs: 1000
+`
+  });
+
+  const result = await fetchJson(`${relay.baseUrl}/api/events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      agentId: "codex-cli",
+      agentLabel: "Codex CLI",
+      kind: "status",
+      text: "relay outbound should fail"
+    })
+  });
+
+  assert.equal(result.outbound[0].ok, false);
+  const store = JSON.parse(await fs.readFile(relay.storePath, "utf8"));
+  assert.ok(store.events.some((event) => (
+    event.kind === "transport.delivery.failed"
+      && event.sessionId === relay.sessionId
+      && event.transport === "telegram"
+      && /Too Many Requests/.test(event.error)
+  )));
 });
 
 test("self-hosted relay Telegram polling preserves concurrent relay store writes", async (t) => {
@@ -1993,7 +2245,7 @@ test("self-hosted relay keeps empty-secret insecure dev mode on loopback", async
   assert.equal(result.ok, true);
 });
 
-async function startRelayFakeTelegram(t, { getUpdatesDelayMs = 0 } = {}) {
+async function startRelayFakeTelegram(t, { getUpdatesDelayMs = 0, sendMessageStatus = 200, sendMessageBody = null } = {}) {
   const port = await getFreePort();
   const pendingUpdates = [];
   const answerCallbacks = [];
@@ -2022,7 +2274,7 @@ async function startRelayFakeTelegram(t, { getUpdatesDelayMs = 0 } = {}) {
     }
     if (method === "sendMessage") {
       sendMessages.push(body);
-      sendJsonResponse(res, { ok: true, result: { message_id: 1 } });
+      sendJsonResponse(res, sendMessageBody ?? { ok: true, result: { message_id: 1 } }, sendMessageStatus);
       return;
     }
     sendJsonResponse(res, { ok: false, description: `unexpected method ${method}` }, 404);
