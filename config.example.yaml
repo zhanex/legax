@@ -270,7 +270,7 @@ claude:
 
 # Read-only mirror of the Codex desktop app's session JSONL files. Off by
 # default. Use only when the desktop app is your primary UI and you just want
-# the phone to observe activity (no remote control). The full bidirectional
+# remote surfaces to observe activity without write access. The full bidirectional
 # bridge requires the regular `codex` adapter + `codex --remote ws://...` TUI.
 codexDesktopMirror:
   enabled: false

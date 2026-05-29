@@ -10,20 +10,21 @@
 | --- | --- |
 | [用户手册](USER_MANUAL.zh-CN.md) | 全新安装、relay 设置、手机配对、Telegram 设置、健康检查和排障。 |
 | [AI 安装指南](AI_INSTALL.zh-CN.md) | 让 Agent 或自动化助手替人类操作者安装 Legax。 |
-| [Codex 插件指南](CODEX_PLUGIN.zh-CN.md) | 安装 Codex 插件、审查发布候选元数据，以及理解 Plugin Directory 准备状态。 |
-| [飞书与 Lark Transport](FEISHU_LARK.zh-CN.md) | 飞书/Lark 自建应用 bot、事件回调、路由和安全边界。 |
-| [适配器指南](ADAPTERS.zh-CN.md) | Codex、Claude Code、Gemini CLI、OpenCode、desktop mirror、运行模式和审批边界。 |
-| [Claude Code 集成](CLAUDE_CODE_INTEGRATION.zh-CN.md) | Claude Code adapter、permission-prompt MCP 流程、安全边界和生态审查问题。 |
+| [Codex 插件指南](CODEX_PLUGIN.zh-CN.md) | 安装 Codex 插件、检查发布前元数据，以及确认是否已具备提交 Plugin Directory 的条件。 |
+| [飞书与 Lark 通道](FEISHU_LARK.zh-CN.md) | 飞书/Lark 自建应用 bot、事件回调、路由和安全边界。 |
+| [适配器指南](ADAPTERS.zh-CN.md) | Codex、Claude Code、Gemini CLI、OpenCode、桌面镜像、运行模式和审批边界。 |
+| [Claude Code 集成](CLAUDE_CODE_INTEGRATION.zh-CN.md) | Claude Code 适配器、permission-prompt MCP 流程、安全边界和生态审查问题。 |
 
 ## 设计与扩展文档
 
 | 文档 | 用途 |
 | --- | --- |
-| [架构](ARCHITECTURE.zh-CN.md) | 控制面、能力面、通信面、daemon、runtime state 和适配器设计。 |
+| [架构](ARCHITECTURE.zh-CN.md) | 控制面、能力面、通信面、relay 接管的 Telegram/飞书路由、daemon、运行时状态和适配器设计。 |
 | [功能边界](FUNCTIONAL_BOUNDARIES.zh-CN.md) | Legax 负责什么、刻意不负责什么，以及非目标。 |
-| [Legax 协议](LEGAX_PROTOCOL.zh-CN.md) | 跨适配器事件契约和 relay 消息形状。 |
+| [Relay Store](RELAY_STORE.zh-CN.md) | `legax.relay/1` 中的会话、generation、lease、handoff、artifact、主机、命令、收件箱和工作流记录。 |
+| [Legax 协议](LEGAX_PROTOCOL.zh-CN.md) | 跨适配器事件契约、配对信息、可迁移会话、checkpoint artifact 和受限工作流 API。 |
 | [LLM 上下文](context_for_llms.zh-CN.md) | 供编码 Agent 修改仓库时使用的仓库地图与安全规则。 |
-| [Adapter 一致性要求](ADAPTER_CONFORMANCE.zh-CN.md) | 路由、会话、审批、重启行为和测试方面的共享 adapter 要求。 |
+| [Adapter 一致性要求](ADAPTER_CONFORMANCE.zh-CN.md) | 路由、会话、审批、重启行为和测试方面的共享适配器要求。 |
 | [扩展 Legax](EXTENDING.zh-CN.md) | 添加适配器、传输、配置字段和测试。 |
 
 ## 维护者文档

@@ -19,9 +19,10 @@ Use this index to choose the shortest document for the job. The root README stay
 
 | Document | Use it for |
 | --- | --- |
-| [Architecture](ARCHITECTURE.md) | Control, capability, communication, daemon, runtime-state, and adapter design. |
+| [Architecture](ARCHITECTURE.md) | Control, capability, communication, relay-owned Telegram/Feishu routing, daemon, runtime-state, and adapter design. |
 | [Functional Boundaries](FUNCTIONAL_BOUNDARIES.md) | What Legax owns, what it intentionally does not own, and non-goals. |
-| [Legax Protocol](LEGAX_PROTOCOL.md) | Cross-adapter event contracts and relay message shapes. |
+| [Relay Store](RELAY_STORE.md) | `legax.relay/1` sessions, generations, leases, handoffs, artifacts, hosts, commands, inbox, and workflow records. |
+| [Legax Protocol](LEGAX_PROTOCOL.md) | Cross-adapter event contracts, pairing offers, portable sessions, checkpoint artifacts, and restricted workflow APIs. |
 | [Context For LLMs](context_for_llms.md) | Repository map and safety rules for coding agents making changes. |
 | [Adapter Conformance](ADAPTER_CONFORMANCE.md) | Shared adapter requirements for routing, sessions, approvals, restart behavior, and tests. |
 | [Extending Legax](EXTENDING.md) | Adding adapters, transports, config fields, and tests. |

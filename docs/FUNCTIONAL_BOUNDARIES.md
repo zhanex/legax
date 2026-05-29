@@ -6,17 +6,23 @@ This document describes Legax from a business workflow perspective. It defines w
 
 ## Product Boundary
 
-Legax is a local-first remote interaction layer for coding-agent CLIs. It lets a user leave the workstation while still seeing important agent events, choosing the target CLI/project/session, replying to the agent, and approving or denying native permission prompts.
+Legax manages cross-device session routing, task identity, remote interaction, approval decisions, handoffs, and controlled workflow steps for agent CLIs.
 
-Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI automation layer, and not a way to bypass native CLI security policy. Process lifecycle belongs to the daemon and adapters. Remote access belongs to relay, Telegram, Feishu/Lark, and webhook transports. Agent capabilities belong to MCP tools only when the host agent explicitly uses them.
+Responsibility boundaries:
+
+- Process lifecycle belongs to the daemon and adapters.
+- Remote interaction belongs to relay, Telegram, Feishu/Lark, browser, and webhook transports.
+- Agent capabilities belong to MCP tools only when the host agent explicitly uses them.
+- Native CLI security policy remains authoritative for approvals.
+- Multi-user SaaS hosting, hosted agent execution, and terminal UI automation are outside the project scope.
 
 ## Actors
 
-- Operator: owns the workstation, configures secrets, starts the relay and daemon, and pairs browser devices.
+- Operator: owns one or more workstations, configures secrets, starts the relay and daemon hosts, and pairs browser devices.
 - Remote user: uses the relay web page, Telegram bot, or Feishu/Lark app bot to choose a conversation target and send actions.
-- Daemon: supervises enabled CLI adapters, polls inbound transports, routes messages, and creates on-demand launch requests.
+- Daemon: supervises enabled CLI adapters on one execution host, polls inbound transports, routes messages, and creates on-demand launch requests. Multiple daemon hosts can connect to the same relay.
 - Adapter: owns one CLI process and one session model. It lists projects/sessions, starts or resumes sessions, sends text into the CLI, parses structured output, and mirrors native approval requests when the CLI exposes a supported callback.
-- Relay: stores events, inbound messages, pairing codes, paired devices, and audit entries for one or more `sessionId` values.
+- Relay: stores events, inbound messages, pairing codes, paired devices, host records, and audit entries for one or more `sessionId` values.
 - Telegram transport: formats outbound notifications and, when relay is enabled, lets the relay turn inbound messages or callback buttons into the same message model used by the browser UI.
 - Feishu/Lark transport: formats outbound app-bot notifications and lets the relay turn event callbacks into the same message model used by the browser UI.
 - MCP server: exposes notification, polling, and permission tools. It never starts or stops CLI processes.
@@ -25,9 +31,9 @@ Legax is not a multi-user SaaS, not a hosted agent runtime, not a terminal UI au
 
 - `config.yaml`: local operator configuration. It is the source for relay URL, relay secret, Telegram bot token, Feishu/Lark app credentials, webhook URLs, and adapter settings.
 - `data/runtime-state.json`: daemon and adapter coordination state. It stores cursors, selected sessions, modes, inbox queues, and launch requests. It is local runtime coordination, not portable relay session truth.
-- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state.
+- `data/relay-store.json`: relay-owned state using schema `legax.relay/1`. It stores sessions, generations, leases, handoffs, hosts, devices, transports, inbox entries, commands, metadata events, artifacts, workflow definitions/runs, legacy event/message queues, pairing codes, and browser pairing state. This is the cross-device source of truth for portable task/session identity; CLI-native histories remain adapter-owned.
 - `data/mcp-state.json`: generic MCP tool state.
-- CLI-native history: Codex, Claude Code, Gemini, and OpenCode own their own session history. Legax reads or resumes it through each CLI's supported interface.
+- CLI-native history: supported agent CLIs own their own session history. Legax reads or resumes it through each CLI's supported interface.
 
 ## Authentication Boundary
 
@@ -133,7 +139,7 @@ Goal: centralize lifecycle and remote inbound routing.
 4. Relay owns Telegram `getUpdates` polling or `/api/telegram/events` webhooks and Feishu/Lark callbacks, then writes normalized actions into `/api/messages`.
 5. Daemon polls relay `/api/messages` and routes inbound messages to per-agent inbox queues.
 6. Daemon posts `/api/hosts` heartbeats with its host id, groups, enabled adapter metadata, and supported command refs.
-7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token. LPS TDD action commands are document/evidence oriented, never accept free-form shell strings from workflow definitions, and require a generation lease when the action may modify workspace files.
+7. Daemon polls relay `/api/commands`, claims eligible allowlisted commands, executes safe built-ins locally, and reports terminal results with the current claim token. LPS TDD action commands model engineering steps with document/evidence inputs; they do not expose arbitrary remote shell execution, and they require a generation lease when the action may modify workspace files.
 8. If a selected adapter is sleeping and `daemon.launchOnDemand` is enabled, daemon records a launch request and starts that adapter.
 
 Completion: remote menu actions work even when a specific CLI adapter has not started yet, and the relay can observe daemon host liveness plus command queue progress.

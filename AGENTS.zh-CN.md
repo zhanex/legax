@@ -36,11 +36,11 @@ npm run test:real:messages            # real-local-message smoke test
 
 ## 架构
 
-本项目是 local-first 的 relay 层，用于把 coding-agent CLI（Codex、Claude Code、Gemini CLI、OpenCode）通过 self-hosted relay、Telegram 或 webhook 桥接到手机。先阅读 `docs/ARCHITECTURE.md`。设计上分为**三个平面**，改代码时不能混淆：
+本项目是面向 Agent CLI 的 session 管理与工作流编排层，通过 relay、Telegram、飞书/Lark 或 webhook 等通道连接受支持的 Agent CLI 和远端交互入口。先阅读 `docs/ARCHITECTURE.md`。设计上分为**三个平面**，改代码时不能混淆：
 
 - **控制平面（CLI adapters）**：负责进程生命周期、会话选择/继续、结构化输出解析。`scripts/` 下每个 agent 一个 adapter：`codex-app-server-link.mjs`（基于 WebSocket app-server 的 JSON-RPC）、`claude-code-link.mjs`（`claude -p` stream-json）、`gemini-cli-link.mjs`（`gemini` stream-json）、`opencode-link.mjs`（OpenCode HTTP server）。每个 adapter 都是长生命周期进程，由 daemon 监督。
 - **能力平面（MCP）**：`scripts/mcp-server.mjs` 是通用 stdio MCP server，暴露 `legax_send/poll/request_permission/status`。`scripts/claude-permission-mcp-server.mjs` 是 Claude 专用的 permission-prompt MCP，会把权限请求镜像到手机，并通过 Claude 的 permission hook 返回决定。MCP 是**能力层，不是生命周期管理器**，不要用它启动/停止进程。
-- **通信平面（transports）**：`scripts/lib/outbound-transports.mjs`（relay POST、Telegram sendMessage、通用 webhook）和 `scripts/lib/inbound-transports.mjs`（Telegram 解析/路由 helper）。daemon 运行时负责 relay `/api/messages` polling 和 Telegram `getUpdates`，把消息写入每个 agent 的 inbox 队列；由 daemon 启动的 adapter 只 drain 自己的 inbox。独立运行的 adapter 保留旧的单 poller fallback。
+- **通信平面（transports）**：`scripts/lib/outbound-transports.mjs`（relay POST、Telegram sendMessage、通用 webhook）和 `scripts/lib/inbound-transports.mjs`（Telegram 解析/路由 helper）。daemon 运行时负责轮询 relay `/api/messages` 和 Telegram `getUpdates`，把消息写入每个 agent 的 inbox 队列；由 daemon 启动的 adapter 只读取自己的 inbox。独立运行的 adapter 保留旧的单 poller 兜底路径。
 
 用户通常运行的是**统一 daemon**（`scripts/legax-daemon.mjs`）。它读取一个 `config.yaml`，负责远端入站路由，监督所有启用的 adapter，以有界 backoff 重启崩溃进程，在启动前写入每个 adapter 的 MCP 配置（`mcpAutoConfigure`），并通过 runtime state 中的 launch request 处理 `autoStart: false` adapter 的**按需启动**。如果只运行某个单独 adapter，它不能启动 sibling adapter。
 
@@ -76,4 +76,4 @@ npm run test:real:messages            # real-local-message smoke test
 
 ## 权限模型（不要破坏）
 
-Legax 会在 adapter 支持时把原生 approval prompt **镜像**到手机，并通过 agent 的结构化 callback 返回决定（Codex JSON-RPC、Claude permission-prompt MCP、Gemini 自己的 approval mode）。它绝不能模拟 UI 点击、自动批准原生 prompt，或绕过 agent 的安全策略。TUI/PTY backend 只能作为 fallback，且必须视为高信任远程终端控制。
+Legax 会在 adapter 支持时把原生 approval prompt **镜像**到手机，并通过 agent 的结构化回调返回决定（Codex JSON-RPC、Claude permission-prompt MCP、Gemini 自己的 approval mode）。它绝不能模拟 UI 点击、自动批准原生 prompt，或绕过 agent 的安全策略。TUI/PTY backend 只能作为兜底路径，且必须视为高信任远程终端控制。

@@ -6,7 +6,7 @@ This file gives coding agents enough repository context to make useful changes w
 
 ## Project In One Paragraph
 
-Legax is a local-first remote control and relay layer for AI coding-agent CLIs. It lets a phone or Telegram user monitor agent events, select a CLI/project/session, reply to the selected agent, and approve or deny supported native permission prompts. It is not a hosted IDE, terminal UI automation layer, or agent security bypass.
+Legax manages session routing, task identity, approvals, handoffs, and controlled workflows across agent CLIs. Remote surfaces can monitor agent events, select a CLI/project/session, reply to the selected agent, and approve or deny supported native permission prompts. Hosted IDE behavior, terminal UI automation, and agent security bypasses are outside the project scope.
 
 ## Core Boundaries
 

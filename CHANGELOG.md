@@ -28,4 +28,4 @@ All notable project changes should be recorded here. The format follows a simple
 
 ## 0.0.1
 
-- Initial local-first relay, daemon, MCP, Telegram, Codex, Claude Code, Gemini CLI, and self-hosted relay implementation.
+- Initial relay, daemon, MCP, Telegram, supported agent CLI adapters, and self-hosted relay implementation.
