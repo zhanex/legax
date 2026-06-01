@@ -35,10 +35,11 @@ Other rules:
 - Two-space indent, double quotes, semicolons. Match the surrounding file rather than introducing a new style.
 - Avoid adding dependencies. If you genuinely need one, open an issue first describing what you tried with stdlib.
 - Each script under `scripts/` is **independently runnable** without bootstrapping a shared module. The duplication of `parseSimpleYaml` was originally intentional for this reason; the shared parser at `scripts/lib/yaml.mjs` is the modern path — use it for new scripts and remove inline copies when you touch an old one.
+- Follow the naming, constant, directory ownership, design-pattern, and anti-pattern rules in [Engineering Guide](../docs/ENGINEERING_GUIDE.md). New hard-coded behavioral values require human review.
 
 ## Adding a New Adapter
 
-The three current adapters (Codex / Claude Code / Gemini CLI) live in `scripts/<agent>-link.mjs`. To add a fourth:
+First-party adapters live in `scripts/<agent>-link.mjs` and are registered through `scripts/lib/adapter-contract.mjs`. To add another adapter:
 
 1. Decide the **CLI backend**. Most modern CLIs expose either stream-json (line-delimited JSON over stdin/stdout) or a JSON-RPC service (stdio or websocket). Avoid PTY / TUI scraping.
 2. Pick a **canonical config key** (e.g. `aider`, `continue`) and a default `agentId`. Add the corresponding section to `config.example.yaml` and its zh-CN pair.
@@ -48,7 +49,7 @@ The three current adapters (Codex / Claude Code / Gemini CLI) live in `scripts/<
    - `scripts/lib/runtime-state.mjs` for adapter coordination such as cursors, modes, queues, and Telegram selections.
    - `scripts/lib/outbound-transports.mjs` for sending events.
    - `scripts/lib/inbound-transports.mjs` for polling phone replies.
-5. Register the adapter in `scripts/legax-daemon.mjs`'s `ADAPTERS` array so the daemon can supervise it. Honor `autoStart`, `useExisting`, `mcpAutoConfigure` if applicable.
+5. Register the adapter in `scripts/lib/adapter-contract.mjs` so the daemon can supervise it. Honor `autoStart`, `useExisting`, `mcpAutoConfigure`, and the adapter conformance checklist.
 6. Add an E2E test under `tests/e2e/<agent>-link.e2e.mjs` that covers: stdin→relay forwarding, relay→stdin handling, mode switching, and (if the CLI has approval) the approval round-trip. Append it to `test:e2e` and `check:node` in `package.json`.
 
 ## Commit Messages

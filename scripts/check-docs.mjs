@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -54,6 +55,22 @@ function walk(dir) {
   return results;
 }
 
+function listGitVisibleFiles() {
+  const result = spawnSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], {
+    cwd: root,
+    encoding: "buffer"
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  return result.stdout.toString("utf8")
+    .split("\0")
+    .filter(Boolean)
+    .map((relPath) => path.join(root, relPath));
+}
+
 function readUtf8(filePath) {
   const bytes = fs.readFileSync(filePath);
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
@@ -62,7 +79,7 @@ function readUtf8(filePath) {
   return bytes.toString("utf8");
 }
 
-const allFiles = walk(root);
+const allFiles = listGitVisibleFiles() ?? walk(root);
 const markdownFiles = allFiles.filter((filePath) => filePath.endsWith(".md"));
 const configExampleFiles = allFiles.filter((filePath) => {
   const name = path.basename(filePath);

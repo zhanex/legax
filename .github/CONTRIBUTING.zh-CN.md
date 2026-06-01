@@ -35,10 +35,11 @@
 - 2 空格缩进、双引号、分号。优先匹配周围文件，不要引入新风格。
 - 不要引入依赖。如果确实需要，请先开 issue 说明用标准库尝试过哪些方案。
 - `scripts/` 下每个脚本都**可以独立运行**，不需要先 bootstrap 共享模块。`parseSimpleYaml` 早期被有意复制就是为此；现在的现代路径是共享解析器 `scripts/lib/yaml.mjs`——新脚本用它、动到旧脚本时顺手把内联副本删掉。
+- 遵守[工程规范](../docs/ENGINEERING_GUIDE.zh-CN.md)中的命名、常量、目录职责、设计模式和禁止模式规则。新增硬编码行为值需要人工审查。
 
 ## 新增 Adapter
 
-目前三个 Adapter（Codex / Claude Code / Gemini CLI）位于 `scripts/<agent>-link.mjs`。新增第四个的路径：
+第一方 adapter 位于 `scripts/<agent>-link.mjs`，并通过 `scripts/lib/adapter-contract.mjs` 注册。新增 adapter 的路径：
 
 1. 选 **CLI backend**。多数现代 CLI 提供 stream-json（行式 JSON over stdin/stdout）或 JSON-RPC 服务（stdio 或 websocket）。**不要**走 PTY / TUI 抓屏。
 2. 定一个 **canonical 配置 key**（如 `aider`、`continue`）和默认 `agentId`。在 `config.example.yaml` 与对应 zh-CN 加一节。
@@ -48,7 +49,7 @@
    - `scripts/lib/runtime-state.mjs` 处理 adapter 协同状态，例如游标、mode、队列、Telegram 选择。
    - `scripts/lib/outbound-transports.mjs` 发事件。
    - `scripts/lib/inbound-transports.mjs` 拉取手机回复。
-5. 在 `scripts/legax-daemon.mjs` 的 `ADAPTERS` 数组中注册，以便 daemon 监督。按需尊重 `autoStart`、`useExisting`、`mcpAutoConfigure`。
+5. 在 `scripts/lib/adapter-contract.mjs` 中注册，以便 daemon 监督。按需尊重 `autoStart`、`useExisting`、`mcpAutoConfigure` 和 adapter conformance checklist。
 6. 在 `tests/e2e/<agent>-link.e2e.mjs` 加 E2E 测试，覆盖：stdin→relay 转发、relay→stdin 处理、mode 切换、（如有审批）审批往返。把它追加到 `package.json` 的 `test:e2e` 与 `check:node` 列表。
 
 ## 提交说明

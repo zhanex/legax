@@ -167,8 +167,16 @@ Legax already handles remote session routing, native approval mirroring where ad
 | Adapter behavior | [docs/ADAPTERS.md](docs/ADAPTERS.md) |
 | Claude Code integration review | [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) |
 | Adapter conformance checklist | [docs/ADAPTER_CONFORMANCE.md](docs/ADAPTER_CONFORMANCE.md) |
+| Engineering rules | [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) |
+| Configuration contract | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
+| Relay HTTP API | [docs/RELAY_API.md](docs/RELAY_API.md) |
 | Relay store schema | [docs/RELAY_STORE.md](docs/RELAY_STORE.md) |
+| Runtime state schema | [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md) |
 | Protocol and workflow contracts | [docs/LEGAX_PROTOCOL.md](docs/LEGAX_PROTOCOL.md) |
+| State machines | [docs/STATE_MACHINES.md](docs/STATE_MACHINES.md) |
+| Compatibility matrix | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
+| Observability rules | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| Architecture decisions | [docs/adr/README.md](docs/adr/README.md) |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | AI/LLM repository context | [docs/context_for_llms.md](docs/context_for_llms.md) |
 | Codespaces | [Open this repo in Codespaces](https://codespaces.new/zhanex/legax) |
@@ -230,11 +238,19 @@ Read the [Privacy Notice](docs/PRIVACY.md), [Security Policy](.github/SECURITY.m
 | Review the Claude Code integration | [Claude Code Integration](docs/CLAUDE_CODE_INTEGRATION.md) |
 | Install or review the Codex plugin | [Codex Plugin Guide](docs/CODEX_PLUGIN.md) |
 | Understand architecture | [Architecture](docs/ARCHITECTURE.md) |
+| Follow engineering conventions | [Engineering Guide](docs/ENGINEERING_GUIDE.md) |
+| Choose docs and tests for a code change | [Change Matrix](docs/CHANGE_MATRIX.md) |
+| Review configuration fields | [Configuration Contract](docs/CONFIGURATION.md) |
+| Review Relay HTTP APIs | [Relay API](docs/RELAY_API.md) |
 | Understand relay-owned state | [Relay Store](docs/RELAY_STORE.md) |
+| Understand local runtime state | [Runtime State](docs/RUNTIME_STATE.md) |
 | Understand protocol and workflows | [Legax Protocol](docs/LEGAX_PROTOCOL.md) |
+| Review state transitions | [State Machines](docs/STATE_MACHINES.md) |
+| Check external compatibility | [Compatibility Matrix](docs/COMPATIBILITY.md) |
 | Understand product boundaries | [Functional Boundaries](docs/FUNCTIONAL_BOUNDARIES.md) |
 | Review adapter requirements | [Adapter Conformance](docs/ADAPTER_CONFORMANCE.md) |
 | Extend the project | [Extending Legax](docs/EXTENDING.md) |
+| Review observability rules | [Observability](docs/OBSERVABILITY.md) |
 | Release packages | [Release Guide](docs/RELEASE.md) |
 
 ## Development
