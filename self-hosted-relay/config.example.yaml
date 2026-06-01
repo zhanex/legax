@@ -11,10 +11,8 @@ relay:
   publicBaseUrl: https://YOUR_RELAY_HOST              # public HTTPS URL used by Telegram Mini Apps
   secret: replace-with-a-long-random-secret           # required; matches transports[type=relay].secret on the desktop side
   storePath: /var/lib/legax-relay/relay-store.json
-  maxEventsPerSession: 500
-  maxMessagesPerSession: 500
   audit:
     enabled: true
     path: /var/lib/legax-relay/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80
+    textPreview: 0

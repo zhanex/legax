@@ -18,6 +18,8 @@ test("daemon starts enabled Codex, Claude, and Gemini adapters from one YAML con
 daemon:
   restart: false
 codex:
+  autoStart: true
+  cliBackend: app-server
   command: ${nodePath}
   args:
     - ${fakeCodex}
@@ -105,7 +107,7 @@ test("daemon dry-run reports enabled adapters without starting clients", async (
   const body = JSON.parse(result.stdout);
   assert.equal(body.ok, true);
   assert.deepEqual(body.adapters.map((adapter) => adapter.name).sort(), ["claude", "codex", "gemini", "opencode"]);
-  assert.deepEqual(body.adapters.map((adapter) => adapter.cliBackend).sort(), ["app-server", "server-http", "stream-json", "stream-json"]);
+  assert.deepEqual(body.adapters.map((adapter) => adapter.cliBackend).sort(), ["app-server-ws", "server-http", "stream-json", "stream-json"]);
   assert.ok(body.adapters.filter((adapter) => adapter.name !== "opencode").every((adapter) => adapter.mcpEnabled === true));
   assert.equal(body.adapters.find((adapter) => adapter.name === "opencode").autoStart, false);
 });
@@ -611,6 +613,34 @@ opencode:
   assert.equal(escaped.ok, false);
   assert.match(escaped.error, /outside the configured project root/);
 
+  const unknownRootRequestId = "twa-unknown-root-e2e";
+  await fetchJson(`${relay.baseUrl}/api/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: relay.phoneCookie
+    },
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      targetAgentId: "legax-daemon",
+      type: "control",
+      action: "list_project_children",
+      selectedAgentId: "codex-cli",
+      requestId: unknownRootRequestId,
+      rootId: "root-missing",
+      relativePath: ""
+    })
+  });
+
+  const unknownRoot = await waitFor(async () => {
+    const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+    const found = events.events.find((event) => event.metadata?.twaRequestId === unknownRootRequestId);
+    assert.ok(found, `${stderr}\n${JSON.stringify(events.events, null, 2)}`);
+    return found.metadata;
+  }, { timeoutMs: 7000 });
+  assert.equal(unknownRoot.ok, false);
+  assert.match(unknownRoot.error, /Unknown project root/);
+
   const openRequestId = "twa-open-e2e";
   await fetchJson(`${relay.baseUrl}/api/messages`, {
     method: "POST",
@@ -639,6 +669,34 @@ opencode:
   assert.equal(opened.ok, true);
   assert.equal(opened.twaResponseType, "open_project");
   assert.equal(path.normalize(opened.projectPath), path.normalize(childProject));
+
+  const unknownOpenRequestId = "twa-open-unknown-root-e2e";
+  await fetchJson(`${relay.baseUrl}/api/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: relay.phoneCookie
+    },
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      targetAgentId: "legax-daemon",
+      type: "control",
+      action: "open_project",
+      selectedAgentId: "codex-cli",
+      requestId: unknownOpenRequestId,
+      rootId: "root-missing",
+      relativePath: "sample-app"
+    })
+  });
+
+  const unknownOpen = await waitFor(async () => {
+    const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+    const found = events.events.find((event) => event.metadata?.twaRequestId === unknownOpenRequestId);
+    assert.ok(found, `${stderr}\n${JSON.stringify(events.events, null, 2)}`);
+    return found.metadata;
+  }, { timeoutMs: 7000 });
+  assert.equal(unknownOpen.ok, false);
+  assert.match(unknownOpen.error, /Unknown project root/);
 
   await waitFor(async () => {
     const state = JSON.parse(await fs.readFile(runtimeStatePath, "utf8"));

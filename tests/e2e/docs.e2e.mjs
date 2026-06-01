@@ -1,56 +1,69 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { pluginRoot } from "./helpers.mjs";
 
-test("documentation gate rejects current package version outside changelog", async () => {
+async function createDocsCheckRoot(t, name) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `legax-docs-${name}-`));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const rootPackage = JSON.parse(await fs.readFile(path.join(pluginRoot, "package.json"), "utf8"));
-  const englishPath = path.join(pluginRoot, "docs", "version-guard-fixture.md");
-  const chinesePath = path.join(pluginRoot, "docs", "version-guard-fixture.zh-CN.md");
-  await fs.writeFile(englishPath, `# Version Guard\n\nDo not write ${rootPackage.version} in docs.\n`, "utf8");
-  await fs.writeFile(chinesePath, `# 版本守卫\n\n不要在文档里写死 ${rootPackage.version}。\n`, "utf8");
-  try {
-    const result = spawnSync(process.execPath, ["scripts/check-docs.mjs"], {
-      cwd: pluginRoot,
-      encoding: "utf8"
-    });
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ version: rootPackage.version }, null, 2), "utf8");
+  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  return { root, version: rootPackage.version };
+}
 
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /must not hard-code current package version/);
-  } finally {
-    await fs.rm(englishPath, { force: true });
-    await fs.rm(chinesePath, { force: true });
-  }
+function runDocsCheck(root) {
+  return spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "check-docs.mjs")], {
+    cwd: root,
+    encoding: "utf8"
+  });
+}
+
+test("documentation gate rejects current package version outside changelog", async (t) => {
+  const { root, version } = await createDocsCheckRoot(t, "version");
+  await fs.writeFile(path.join(root, "docs", "version-guard-fixture.md"), `# Version Guard\n\nDo not write ${version} in docs.\n`, "utf8");
+  await fs.writeFile(
+    path.join(root, "docs", "version-guard-fixture.zh-CN.md"),
+    `# \u7248\u672c\u5b88\u536b\n\n\u4e0d\u8981\u5728\u6587\u6863\u91cc\u5199\u6b7b ${version}\u3002\n`,
+    "utf8"
+  );
+
+  const result = runDocsCheck(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must not hard-code current package version/);
 });
 
-test("documentation gate rejects broken local links and image references", async () => {
-  const englishPath = path.join(pluginRoot, "docs", "broken-link-fixture.md");
-  const chinesePath = path.join(pluginRoot, "docs", "broken-link-fixture.zh-CN.md");
+test("documentation gate rejects broken local links and image references", async (t) => {
+  const { root } = await createDocsCheckRoot(t, "links");
   await fs.writeFile(
-    englishPath,
+    path.join(root, "docs", "broken-link-fixture.md"),
     "# Broken Link Fixture\n\nSee [missing](./missing-doc-fixture.md).\n\n![missing](./image/missing-fixture.png)\n",
     "utf8"
   );
   await fs.writeFile(
-    chinesePath,
-    "# 失效链接夹具\n\n查看 [缺失文档](./missing-doc-fixture.md)。\n\n![缺失图片](./image/missing-fixture.png)\n",
+    path.join(root, "docs", "broken-link-fixture.zh-CN.md"),
+    "# \u5931\u6548\u94fe\u63a5\u5939\u5177\n\n\u67e5\u770b [\u7f3a\u5931\u6587\u6863](./missing-doc-fixture.md)\u3002\n\n![\u7f3a\u5931\u56fe\u7247](./image/missing-fixture.png)\n",
     "utf8"
   );
-  try {
-    const result = spawnSync(process.execPath, ["scripts/check-docs.mjs"], {
-      cwd: pluginRoot,
-      encoding: "utf8"
-    });
 
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /broken local .*reference/);
-  } finally {
-    await fs.rm(englishPath, { force: true });
-    await fs.rm(chinesePath, { force: true });
-  }
+  const result = runDocsCheck(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /broken local .*reference/);
+});
+
+test("documentation gate rejects machine-specific workspace paths", async (t) => {
+  const { root } = await createDocsCheckRoot(t, "paths");
+  const machinePath = ["F:", "workspace"].join("/");
+  await fs.writeFile(path.join(root, "config.example.yaml"), `daemon:\n  projectRoots:\n    - ${machinePath}\n`, "utf8");
+  await fs.writeFile(path.join(root, "config.example.zh-CN.yaml"), `daemon:\n  projectRoots:\n    - ${machinePath}\n`, "utf8");
+
+  const result = runDocsCheck(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /machine-specific local path/);
 });
 
 test("documentation gate ignores gitignored process notes", async () => {
@@ -100,7 +113,6 @@ test("change matrix covers tracked implementation and config files", async () =>
     /^self-hosted-relay\/(install|uninstall)\.sh$/,
     /^self-hosted-relay\/.*\/legax-relay$/,
     /^self-hosted-relay\/.*\.service$/,
-    /^self-hosted-relay\/config\.example.*\.yaml$/,
     /^packages\/[^/]+\/bin\//,
     /^packages\/[^/]+\/package\.json$/,
     /^\.github\/workflows\//,

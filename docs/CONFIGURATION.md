@@ -19,13 +19,13 @@ Runtime state files are resolved from the active config path. Do not assume the 
 The parser in `scripts/lib/yaml.mjs` is intentionally minimal. Supported shapes are:
 
 - top-level scalars
-- two-level nested objects
-- the `transports:` list with indented subkeys
+- indentation-based nested objects used by the example configs
+- lists introduced by `- `, including lists of scalars and objects
 - per-key scalar lists
 - inline comments outside quotes
 - booleans, null, numbers, single-quoted strings, double-quoted strings, and unquoted strings
 
-Unsupported YAML features include anchors, tags, multiline scalars, flow style, and deep arbitrary nesting. New config shapes must fit this subset or first extend the shared parser and the standalone relay copy in lockstep.
+Unsupported YAML features include anchors, tags, multiline scalars, and flow style. New config shapes must fit this subset or first extend the shared parser and the standalone relay copy in lockstep.
 
 ## Top-Level Sections
 
@@ -68,7 +68,7 @@ Adapter section names are public config keys. Adding or renaming them requires u
 | `audit.enabled` | boolean | Enables metadata-oriented audit log. |
 | `audit.path` | string | Audit JSONL output path. |
 | `audit.maxTail` | number | Maximum returned audit tail records. |
-| `audit.textPreview` | number | Preview length; `0` omits body previews. |
+| `audit.textPreview` | number | Preview length; default `0` keeps audit metadata-only. Values above `0` are redacted before writing. |
 
 ## Transport Entries
 
@@ -79,7 +79,7 @@ Every transport entry has `name`, `type`, `enabled`, and optional `timeoutMs`. T
 | `relay` | `baseUrl`, `secret` | Desktop-authenticated relay path. |
 | `telegram` | `botToken`, `chatId` when enabled for outbound | With relay enabled, relay owns polling or webhook ingress. |
 | `feishu` | `appId`, `appSecret`, `receiveId`, `verificationToken` | `platform: lark` or `apiBaseUrl` selects Lark global. |
-| `webhook` | `url` | Optional `secret` is sent to the receiving service according to shared transport code. |
+| `webhook` | `url` | Outbound by default. Optional `secret` is sent to the receiving service. Relay inbound webhooks require explicit `inboundEnabled: true` and a separate `inboundSecret`. |
 
 Transport-local `notifications` override daemon-wide and adapter-level notification defaults for that transport only.
 

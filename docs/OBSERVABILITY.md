@@ -26,12 +26,12 @@ Legax observability is intentionally local and low-noise. The project should hel
 
 ## Audit Log
 
-Relay audit is append-only JSONL when `relay.audit.enabled` is true. It records metadata and a configurable text preview:
+Relay audit is append-only JSONL when `relay.audit.enabled` is true. It records metadata and, only when explicitly configured, a redacted text preview:
 
 - `relay.audit.path` controls the file path.
 - `relay.audit.maxTail` controls how many records the API returns.
-- `relay.audit.textPreview` controls preview length.
-- `relay.audit.textPreview: 0` omits body previews.
+- `relay.audit.textPreview` controls preview length and defaults to `0`.
+- `relay.audit.textPreview: 0` omits body previews; values above `0` are redacted before writing.
 
 Audit is not a compliance archive or a revocation system. It is local relay-host diagnostics.
 

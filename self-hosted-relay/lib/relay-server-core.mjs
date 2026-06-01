@@ -49,7 +49,8 @@ let MAX_REQUEST_BODY_BYTES = 1_048_576;
 let AUDIT_DISABLED = false;
 let AUDIT_LOG_PATH = "";
 let AUDIT_MAX_TAIL = 1000;
-let AUDIT_TEXT_PREVIEW = 80;
+let AUDIT_TEXT_PREVIEW = 0;
+const AUDIT_TEXT_REDACT_LOOKAHEAD = 200;
 let TELEGRAM_POLL_TIMERS = [];
 const TELEGRAM_ACTIVE_POLLS = new Set();
 
@@ -80,6 +81,17 @@ const WORKFLOW_BUILTIN_ACTIONS = new Set([
   "legax.daemon.status",
   ...LPS_ACTION_IDS
 ]);
+
+const DEFAULT_AUDIT_REDACT_PATTERNS = [
+  "(?i)(api[_-]?key|token|password|secret)\\s*[:=]\\s*\\S+",
+  "\\b(?:lease|claim)_[A-Za-z0-9_-]{12,}\\b",
+  "sk-[A-Za-z0-9_-]{20,}",
+  "gh[pousr]_[A-Za-z0-9_]{20,}",
+  "github_pat_[A-Za-z0-9_]{20,}",
+  "\\b\\d{8,}:[A-Za-z0-9_-]{30,}\\b",
+  "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+  "-----BEGIN [A-Z ]+PRIVATE KEY-----"
+];
 const RELAY_STORE_OBJECT_DOMAINS = [
   "sessions",
   "generations",
@@ -143,7 +155,7 @@ function relayRuntimeOptions({
       ? (standalone ? path.resolve(auditCfg.path) : resolveRuntimeFile(auditCfg.path, configPath, "relay-audit.jsonl", env))
       : (standalone ? STANDALONE_AUDIT_LOG_PATH : resolveRuntimeFile("", configPath, "relay-audit.jsonl", env)),
     auditMaxTail: Math.max(1, Number(auditCfg.maxTail ?? 1000)),
-    auditTextPreview: Math.max(0, Number(auditCfg.textPreview ?? 80))
+    auditTextPreview: Math.max(0, Number(auditCfg.textPreview ?? 0))
   };
 }
 
@@ -698,6 +710,59 @@ function pairingQrPayload(req, url, offer) {
   };
 }
 
+function compileRedactPattern(pattern) {
+  const text = String(pattern ?? "");
+  const source = text.startsWith("(?i)") ? text.slice(4) : text;
+  const flags = text.startsWith("(?i)") ? "gi" : "g";
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+}
+
+function configuredAuditSecrets() {
+  const secrets = [
+    DESKTOP_SECRET,
+    RAW_CONFIG.relay?.secret
+  ];
+  for (const transport of Array.isArray(RAW_CONFIG.transports) ? RAW_CONFIG.transports : []) {
+    secrets.push(
+      transport?.secret,
+      transport?.botToken,
+      transport?.appSecret,
+      transport?.webhookSecret,
+      transport?.inboundSecret,
+      transport?.verificationToken,
+      transport?.encryptKey
+    );
+  }
+  return secrets
+    .map((value) => String(value ?? ""))
+    .filter((value) => value.length >= 8);
+}
+
+function redactAuditText(text) {
+  let output = String(text ?? "").replace(/\s+/g, " ");
+  const configuredPatterns = RAW_CONFIG.security?.redactByDefault === false
+    ? []
+    : (Array.isArray(RAW_CONFIG.security?.redactPatterns) ? RAW_CONFIG.security.redactPatterns : []);
+  for (const pattern of [...DEFAULT_AUDIT_REDACT_PATTERNS, ...configuredPatterns]) {
+    const regex = compileRedactPattern(pattern);
+    if (regex) output = output.replace(regex, "[REDACTED]");
+  }
+  for (const secret of configuredAuditSecrets()) {
+    output = output.split(secret).join("[REDACTED]");
+  }
+  return output;
+}
+
+function auditTextPreview(text) {
+  if (AUDIT_TEXT_PREVIEW <= 0 || typeof text !== "string") return undefined;
+  const sample = text.slice(0, AUDIT_TEXT_PREVIEW + AUDIT_TEXT_REDACT_LOOKAHEAD);
+  return redactAuditText(sample).slice(0, AUDIT_TEXT_PREVIEW);
+}
+
 // Append-only audit log. Writes a one-line JSON entry per event / message /
 // permission decision. By design we record metadata only — no message bodies —
 // so a leaked audit log does not equal a leaked conversation. A short text
@@ -720,9 +785,7 @@ function appendAudit(direction, payload) {
     decision: payload.decision,
     requestId: payload.requestId ?? payload.metadata?.requestId,
     textLength: typeof payload.text === "string" ? payload.text.length : undefined,
-    textPreview: AUDIT_TEXT_PREVIEW > 0 && typeof payload.text === "string"
-      ? payload.text.replace(/\s+/g, " ").slice(0, AUDIT_TEXT_PREVIEW)
-      : undefined
+    textPreview: auditTextPreview(payload.text)
   };
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG_PATH), { recursive: true });
@@ -1076,6 +1139,19 @@ function claimRelayCommand(store, commandId, body) {
   return command;
 }
 
+function requireCurrentCommandLease(store, command, body, hostId) {
+  if (!command.leaseToken) return;
+  const generationId = relayString(command.generationId, "", 160);
+  if (!generationId) throw relayHttpError(409, "command lease is missing generation");
+  const lease = activeLeaseForGeneration(store, generationId);
+  if (!lease) throw relayHttpError(409, "generation has no active lease");
+  if (lease.hostId !== hostId) throw relayHttpError(409, "stale command lease host");
+  if (command.leaseToken !== lease.token) throw relayHttpError(409, "stale command lease token");
+  if (relayString(body.leaseToken, "", 240) !== lease.token) {
+    throw relayHttpError(409, "stale command lease token");
+  }
+}
+
 function completeRelayCommand(store, commandId, body) {
   const command = store.commands[commandId];
   if (!command) throw relayHttpError(404, "command not found");
@@ -1092,9 +1168,7 @@ function completeRelayCommand(store, commandId, body) {
   if (command.claimedBy !== hostId || command.claimToken !== claimToken) {
     throw relayHttpError(409, "stale command result");
   }
-  if (command.leaseToken && relayString(body.leaseToken, "", 240) !== command.leaseToken) {
-    throw relayHttpError(409, "stale command lease token");
-  }
+  requireCurrentCommandLease(store, command, body, hostId);
   const state = relayString(body.state ?? body.status, "", 40);
   if (!COMMAND_RESULT_STATES.has(state)) {
     throw relayHttpError(400, "result state must be succeeded, failed, or cancelled");
@@ -2255,9 +2329,14 @@ function enabledWebhookTransports() {
     .filter((transport) => transport?.enabled !== false && transport?.type === "webhook");
 }
 
+function enabledInboundWebhookTransports() {
+  return enabledWebhookTransports()
+    .filter((transport) => transport?.inboundEnabled === true);
+}
+
 function webhookTransportFromRequest(url) {
   const name = url.searchParams.get("transport");
-  const transports = enabledWebhookTransports();
+  const transports = enabledInboundWebhookTransports();
   if (name) return transports.find((transport) => String(transport.name ?? "webhook") === name);
   return transports[0];
 }
@@ -2292,7 +2371,8 @@ function webhookTargetAgentId(body, transport) {
 }
 
 function verifyWebhookEvent(req, transport) {
-  const expected = String(transport?.inboundSecret ?? transport?.secret ?? transport?.webhookSecret ?? "");
+  const expected = String(transport?.inboundSecret ?? "");
+  if (!expected) return false;
   const headerSecret = String(req.headers["x-legax-secret"] ?? "");
   const bearer = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
   return safeEqual(headerSecret, expected) || safeEqual(bearer, expected);

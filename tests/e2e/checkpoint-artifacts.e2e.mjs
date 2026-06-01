@@ -82,6 +82,7 @@ test("checkpoint artifacts encrypt safe bundles and restore without plaintext re
     recipients: [recipient.publicKey]
   });
 
+  assert.equal(artifact.metadata.schema, "legax.checkpoint/1");
   assert.doesNotMatch(JSON.stringify(artifact), /hello changed|new file|plaintext-secret|native-session-id/);
   const restoredBundle = decryptCheckpointArtifact(artifact, {
     privateKey: recipient.privateKey,
@@ -143,6 +144,30 @@ test("checkpoint restore skips unchanged files before overwriting existing paths
   const overwritten = restoreCheckpointBundle(bundle, { targetDir: restoreRoot, allowOverwrite: true });
   assert.deepEqual(overwritten.written.map((entry) => entry.path), ["src/app.txt"]);
   assert.equal(await fs.readFile(path.join(restoreRoot, "src", "app.txt"), "utf8"), "restored\n");
+});
+
+test("checkpoint restore accepts legacy artifact schema bundles", async (t) => {
+  const restoreRoot = await tempDir("checkpoint-restore-legacy-schema");
+  t.after(async () => {
+    await fs.rm(restoreRoot, { recursive: true, force: true });
+  });
+
+  const legacyBundle = {
+    schema: "legax.artifact/1",
+    sessionId: "session-checkpoint",
+    generationId: "gen-checkpoint",
+    files: [{
+      path: "src/legacy.txt",
+      encoding: "base64",
+      content: Buffer.from("legacy\n").toString("base64url"),
+      size: 7,
+      sha256: sha256Base64url("legacy\n")
+    }]
+  };
+
+  const report = restoreCheckpointBundle(legacyBundle, { targetDir: restoreRoot });
+  assert.deepEqual(report.written.map((entry) => entry.path), ["src/legacy.txt"]);
+  assert.equal(await fs.readFile(path.join(restoreRoot, "src", "legacy.txt"), "utf8"), "legacy\n");
 });
 
 test("checkpoint restore rejects traversal and symlink escape attempts", async (t) => {

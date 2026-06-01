@@ -16,7 +16,8 @@ import {
   normalizeApprovals,
   setAgentCursor,
   setAgentMode,
-  setAgentThreadSelection
+  setAgentThreadSelection,
+  shouldForwardRemoteEvent
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import {
@@ -491,6 +492,7 @@ class RelayClient {
       },
       createdAt: new Date().toISOString()
     };
+    if (!shouldForwardRemoteEvent(event.metadata.mode, kind, event.metadata)) return event;
     const results = [];
     if (this.relay) {
       try {
@@ -577,7 +579,8 @@ class OpenCodeLink {
       mode: this.mode,
       serverUrl: this.config.opencode.serverUrl,
       serverMode: this.config.opencode.serverMode,
-      telegramSuppress: availability.ok
+      telegramSuppress: availability.ok,
+      allowWhenPaused: true
     });
     this.startPolling();
   }
@@ -660,7 +663,8 @@ class OpenCodeLink {
           if (!this.canAcceptText()) {
             await this.relay.send("status", `Phone text ignored because remote mode is ${this.mode}.`, {
               adapter: "opencode",
-              mode: this.mode
+              mode: this.mode,
+              allowWhenPaused: true
             });
             continue;
           }
@@ -715,7 +719,8 @@ class OpenCodeLink {
       await this.relay.send("status", `OpenCode remote mode switched to ${nextMode}.`, {
         adapter: "opencode",
         mode: nextMode,
-        controlMessageId: message.id
+        controlMessageId: message.id,
+        allowWhenPaused: true
       });
     }
   }

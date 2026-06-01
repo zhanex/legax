@@ -3,7 +3,16 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
+import { shouldForwardRemoteEvent } from "../../scripts/lib/runtime-state.mjs";
 import { fetchJson, pluginRoot, removeTempFiles, sleep, startRelay, waitFor, writeTempConfig } from "./helpers.mjs";
+
+test("paused mode suppresses remote output unless the event is explicitly allowed", () => {
+  assert.equal(shouldForwardRemoteEvent("paused", "agent_text"), false);
+  assert.equal(shouldForwardRemoteEvent("paused", "permission_request"), false);
+  assert.equal(shouldForwardRemoteEvent("paused", "status"), false);
+  assert.equal(shouldForwardRemoteEvent("paused", "status", { allowWhenPaused: true }), true);
+  assert.equal(shouldForwardRemoteEvent("interactive", "agent_text"), true);
+});
 
 test("adapter cursor persists so old phone messages are not replayed on restart", async (t) => {
   const relay = await startRelay(t, { sessionId: "cursor-state-e2e" });

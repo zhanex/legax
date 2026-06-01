@@ -29,7 +29,7 @@ This document records what Legax expects from each supported external CLI or pla
 | Relay browser | HTTP(S), paired device cookie | Relay | Browser never receives the desktop secret. |
 | Telegram | Bot API polling or webhook | Relay when relay transport is enabled; direct polling only as no-relay fallback | Telegram callback data must stay compact and target-aware. |
 | Feishu/Lark | App bot send APIs and event subscription | Relay | Encrypted callbacks require an upstream decrypting gateway today. |
-| Webhook | Operator-owned HTTP endpoint | Outbound only | Receiver sees the configured event payload. |
+| Webhook | Operator-owned HTTP endpoint | Outbound by default; inbound only with explicit `inboundEnabled` + `inboundSecret` | Receiver sees the configured event payload. |
 
 ## Compatibility Change Rules
 

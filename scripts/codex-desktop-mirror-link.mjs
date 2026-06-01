@@ -22,7 +22,8 @@ import {
   getAgentRuntime,
   messagesCreatedAfter,
   normalizeApprovals,
-  setAgentCursor
+  setAgentCursor,
+  shouldForwardRemoteEvent
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
@@ -207,6 +208,7 @@ class MirrorClient {
       },
       createdAt: new Date().toISOString()
     };
+    if (!shouldForwardRemoteEvent(event.metadata.mode, kind, event.metadata)) return event;
     const results = [];
     if (this.relay) {
       try {
@@ -429,7 +431,8 @@ async function main() {
   const watcher = new JsonlTailWatcher(client);
   watcher.start();
   await client.send("status", "Codex desktop mirror started (read-only). Watching ~/.codex/sessions for the latest rollout.", {
-    sessionsRoot: config.codexDesktopMirror.sessionsRoot
+    sessionsRoot: config.codexDesktopMirror.sessionsRoot,
+    allowWhenPaused: true
   });
   process.stderr.write("[legax] codex-desktop-mirror is running.\n");
   process.on("SIGINT", () => { watcher.stop(); process.exit(0); });

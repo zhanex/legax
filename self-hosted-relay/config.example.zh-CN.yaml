@@ -10,10 +10,8 @@ relay:
   publicBaseUrl: https://YOUR_RELAY_HOST              # Telegram Mini App 使用的公网 HTTPS 地址
   secret: replace-with-a-long-random-secret           # 必填；与桌面端 transports[type=relay].secret 一致
   storePath: /var/lib/legax-relay/relay-store.json
-  maxEventsPerSession: 500
-  maxMessagesPerSession: 500
   audit:
     enabled: true
     path: /var/lib/legax-relay/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80
+    textPreview: 0

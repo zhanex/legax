@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { fetchJson, pluginRoot, removeTempFiles, startRelay, writeTempConfig } from "./helpers.mjs";
+import { dataDir, fetchJson, getFreePort, pluginRoot, removeTempFiles, startRelay, writeTempConfig } from "./helpers.mjs";
 
 test("MCP bridge sends to relay and polls phone replies", async (t) => {
   const relay = await startRelay(t, { sessionId: "mcp-e2e" });
@@ -114,6 +114,110 @@ test("MCP bridge sends to relay and polls phone replies", async (t) => {
   assert.equal(pollResult.structuredContent.messages.length, 1);
   assert.equal(pollResult.structuredContent.messages[0].text, "reply from phone");
 });
+
+test("MCP bridge respects paused mode before sending or requesting approval", async (t) => {
+  const relay = await startRelay(t, { sessionId: "mcp-paused-e2e" });
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+  await fs.writeFile(runtimeStatePath, `${JSON.stringify({
+    version: 1,
+    sessions: {
+      [relay.sessionId]: {
+        agents: {
+          "mcp-agent": { mode: "paused" }
+        }
+      }
+    }
+  }, null, 2)}\n`, "utf8");
+
+  const { rpc, server } = startMcpServer(configPath, relay.desktopSecret);
+  t.after(() => server.kill());
+  await rpc.call("initialize", {});
+
+  const sendResult = await rpc.call("tools/call", {
+    name: "legax_send",
+    arguments: {
+      text: "should stay local",
+      metadata: { allowWhenPaused: true }
+    }
+  });
+  const sendBody = JSON.parse(sendResult.content[0].text);
+  assert.equal(sendBody.ok, false);
+  assert.equal(sendBody.results[0].reason, "paused");
+
+  const permissionResult = await rpc.call("tools/call", {
+    name: "legax_request_permission",
+    arguments: {
+      title: "Paused approval",
+      body: "Should not reach the phone",
+      timeoutMs: 1
+    }
+  });
+  const permissionBody = JSON.parse(permissionResult.content[0].text);
+  assert.equal(permissionBody.ok, false);
+  assert.equal(permissionBody.permission.status, "denied");
+  assert.equal(permissionBody.results[0].reason, "paused");
+
+  const phoneEvents = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+  assert.deepEqual(phoneEvents.events, []);
+});
+
+test("MCP relay-owned Telegram skip does not count as delivery success", async (t) => {
+  await fs.mkdir(dataDir, { recursive: true });
+  const port = await getFreePort();
+  const configPath = path.join(dataDir, `config-e2e-mcp-relay-owned-${process.pid}-${Date.now()}.yaml`);
+  const statePath = path.join(dataDir, `mcp-state-e2e-relay-owned-${process.pid}-${Date.now()}.json`).replaceAll("\\", "/");
+  const runtimeStatePath = path.join(dataDir, `runtime-state-e2e-relay-owned-${process.pid}-${Date.now()}.json`).replaceAll("\\", "/");
+  await fs.writeFile(configPath, `sessionId: mcp-relay-owned-e2e
+storagePath: ${statePath}
+runtimeStatePath: ${runtimeStatePath}
+transports:
+  - name: down-relay
+    type: relay
+    enabled: true
+    baseUrl: http://127.0.0.1:${port}
+    secret: test-secret
+    timeoutMs: 200
+  - name: telegram
+    type: telegram
+    enabled: true
+    botToken: test-token
+    chatId: 42
+    timeoutMs: 200
+`, "utf8");
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const { rpc, server } = startMcpServer(configPath, "test-secret");
+  t.after(() => server.kill());
+  await rpc.call("initialize", {});
+
+  const sendResult = await rpc.call("tools/call", {
+    name: "legax_send",
+    arguments: {
+      text: "relay is down"
+    }
+  });
+  const body = JSON.parse(sendResult.content[0].text);
+  assert.equal(body.ok, false);
+  assert.equal(body.results.some((result) => result.type === "relay" && result.ok === false), true);
+  const telegram = body.results.find((result) => result.type === "telegram");
+  assert.equal(telegram.skipped, true);
+  assert.equal(telegram.ok, false);
+  assert.equal(telegram.reason, "relay-owned");
+});
+
+function startMcpServer(configPath, desktopSecret) {
+  const server = spawn(process.execPath, ["scripts/mcp-server.mjs"], {
+    cwd: pluginRoot,
+    env: {
+      ...process.env,
+      LEGAX_CONFIG: configPath,
+      LEGAX_SECRET: desktopSecret
+    },
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  return { server, rpc: createLineRpc(server) };
+}
 
 function createLineRpc(child) {
   let nextId = 1;

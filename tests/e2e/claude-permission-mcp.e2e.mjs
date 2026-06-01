@@ -106,11 +106,16 @@ claude:
   });
   const body = JSON.parse(result.content[0].text);
   assert.equal(body.behavior, "deny");
+
+  const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+  assert.equal(events.events.some((event) => event.kind === "permission_request"), false);
 });
 
 test("Claude permission MCP reads persisted paused mode before accepting phone approvals", async (t) => {
   const relay = await startRelay(t, { sessionId: "claude-permission-mode-e2e" });
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+approvals:
+  defaultOnTimeout: approve
 claude:
   approvalTimeoutMs: 5000
   permissionBehaviorOnApprove: allow
@@ -141,6 +146,9 @@ claude:
   });
   const body = JSON.parse(result.content[0].text);
   assert.equal(body.behavior, "deny");
+
+  const events = await fetchJson(`${relay.baseUrl}/api/events?sessionId=${relay.sessionId}&after=0`);
+  assert.equal(events.events.some((event) => event.kind === "permission_request"), false);
 });
 
 function startPermissionServer(configPath, desktopSecret) {

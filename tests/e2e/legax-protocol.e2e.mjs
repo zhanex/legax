@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   LEGAX_EVENT_KINDS,
+  LEGAX_LEGACY_EVENT_KINDS,
   normalizeLegaxEvent,
   validateLegaxEvent
 } from "../../scripts/lib/legax-protocol.mjs";
@@ -31,6 +32,18 @@ test("Legax protocol accepts the standard cross-adapter event kinds", () => {
     assert.equal(event.sessionId, "protocol-e2e");
     assert.match(event.id, /^legax_evt_/);
     assert.doesNotThrow(() => validateLegaxEvent(event));
+  }
+});
+
+test("Legax protocol keeps legacy relay event kinds valid during migration", () => {
+  for (const kind of ["agent_text", "status", "permission_request", "user_input_request"]) {
+    assert.equal(LEGAX_LEGACY_EVENT_KINDS.includes(kind), true);
+    assert.doesNotThrow(() => validateLegaxEvent({
+      v: 1,
+      kind,
+      sessionId: "protocol-e2e",
+      metadata: kind.endsWith("_request") ? { requestId: "req-1" } : {}
+    }));
   }
 });
 

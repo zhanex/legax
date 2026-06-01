@@ -12,6 +12,13 @@ const excludedDirs = new Set([
   ".git",
   "data",
   "node_modules",
+  "drafts",
+  "plans",
+  "scratch",
+  "specs",
+  "superpowers",
+  "temp",
+  "tmp",
 ]);
 
 const mojibakePattern = /[\uFFFD]|锛|涓|鐨|杩|绠|銆|乣|丆|丄|鈥|€|ä¸|å|æ/g;
@@ -21,6 +28,12 @@ const secretPatterns = [
   { name: "Telegram bot token", pattern: /\b\d{8,}:[A-Za-z0-9_-]{30,}\b/ },
   { name: "OpenAI-style API key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
   { name: "GitHub token", pattern: /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/ },
+];
+
+const machineLocalPathPatterns = [
+  { name: "Windows workspace path", pattern: /\b[A-Za-z]:[\\/](?:workspace|work)(?:[\\/][^`"'\s)]*)?(?=$|[\s"'`)])/i },
+  { name: "Unix user workspace path", pattern: /(^|[\s"'(])\/(?:Users|home)\/[^`"'\s)]+/ },
+  { name: "temporary directory path", pattern: /(^|[\s"'(])\/tmp\/[^`"'\s)]+/ },
 ];
 
 const errors = [];
@@ -149,6 +162,12 @@ for (const filePath of scannedFiles) {
   for (const { name, pattern } of secretPatterns) {
     if (pattern.test(text)) {
       errors.push(`${relPath} appears to contain a real ${name}`);
+    }
+  }
+
+  for (const { name, pattern } of machineLocalPathPatterns) {
+    if (pattern.test(text)) {
+      errors.push(`${relPath} contains a machine-specific local path (${name}); use a placeholder or relative example path`);
     }
   }
 

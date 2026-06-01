@@ -7,6 +7,12 @@ import { telegramApiUrl } from "./lib/telegram-transport.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import { packageAssetPath, resolveConfigPath, resolveRuntimeFile } from "./lib/paths.mjs";
 import { serverInfo } from "./lib/version.mjs";
+import {
+  canAcceptApproval as runtimeCanAcceptApproval,
+  getAgentRuntime,
+  normalizeApprovals,
+  shouldForwardRemoteEvent
+} from "./lib/runtime-state.mjs";
 
 
 const SERVER_INFO = serverInfo("legax");
@@ -266,12 +272,14 @@ function normalizeConfig(raw, configPath, sourcePath) {
       ...DEFAULT_CONFIG.remote,
       ...(raw.remote ?? {})
     },
+    approvals: normalizeApprovals(raw.approvals),
     transports: Array.isArray(raw.transports)
       ? raw.transports
       : DEFAULT_CONFIG.transports
   };
   config.configPath = configPath;
   config.configSourcePath = sourcePath;
+  config.runtimeStatePath = resolveRuntimeFile(config.runtimeStatePath, configPath, "runtime-state.json");
   config.storagePath = resolveRuntimeFile(config.storagePath, configPath, "mcp-state.json");
   config.transports = config.transports
     .map((transport, index) => ({
@@ -359,6 +367,29 @@ function redactConfig(config) {
 function transportKey(transport) {
   const locator = transport.baseUrl ?? transport.url ?? transport.chatId ?? transport.name;
   return `${transport.type}:${transport.name}:${locator}`;
+}
+
+function relayOwnsTelegram(config) {
+  return config.transports.some((transport) => transport.type === "relay" && transport.baseUrl);
+}
+
+function runtimeModeForAgent(config, agentId) {
+  const runtime = getAgentRuntime(config, {
+    agentId: agentId ?? config.agentId,
+    mode: config.remote?.defaultMode
+  });
+  return runtime.mode;
+}
+
+function blockedRemoteResult(mode, kind = "event") {
+  return {
+    transport: "remote",
+    type: "paused",
+    ok: false,
+    skipped: true,
+    reason: "paused",
+    error: `Remote ${kind} ignored because remote mode is ${mode}.`
+  };
 }
 
 async function httpJson(url, options = {}, timeoutMs = 15000) {
@@ -470,12 +501,24 @@ async function dispatchEvent(config, state, event) {
   if (config.remote?.enabled === false) {
     return [{ transport: "remote", type: "disabled", ok: false, error: "Legax remote control disabled by config." }];
   }
+  const mode = runtimeModeForAgent(config, event.agentId);
+  event.metadata = { ...(event.metadata ?? {}), mode };
+  if (!shouldForwardRemoteEvent(mode, event.kind)) {
+    return [blockedRemoteResult(mode, "event")];
+  }
   const results = [];
+  const telegramIsRelayOwned = relayOwnsTelegram(config);
   for (const transport of config.transports) {
     try {
       let result;
       if (transport.type === "relay") result = await sendViaRelay(transport, event);
-      else if (transport.type === "telegram") result = await sendViaTelegram(config, transport, event);
+      else if (transport.type === "telegram") {
+        if (telegramIsRelayOwned) {
+          results.push({ transport: transport.name, type: transport.type, ok: false, skipped: true, reason: "relay-owned" });
+          continue;
+        }
+        result = await sendViaTelegram(config, transport, event);
+      }
       else if (transport.type === "webhook") result = await sendViaWebhook(transport, event);
       else throw new Error(`Unsupported transport type: ${transport.type}`);
       results.push({ transport: transport.name, type: transport.type, ok: true, result });
@@ -615,8 +658,10 @@ function storeInboundMessage(state, message) {
 async function pollInbound(config, state, sessionId, agentId = config.agentId) {
   const messages = [];
   const errors = [];
+  const telegramIsRelayOwned = relayOwnsTelegram(config);
   for (const transport of config.transports) {
     if (!["relay", "telegram"].includes(transport.type)) continue;
+    if (transport.type === "telegram" && telegramIsRelayOwned) continue;
     try {
       const fetched = transport.type === "relay"
         ? await pollRelay(config, state, transport, sessionId, agentId)
@@ -671,6 +716,23 @@ async function toolRequestPermission(args) {
   const config = loadConfig();
   const state = loadState(config);
   const requestId = crypto.randomUUID();
+  const agentId = args.agentId ?? config.agentId;
+  const mode = runtimeModeForAgent(config, agentId);
+  if (!runtimeCanAcceptApproval(config, mode)) {
+    const permission = {
+      requestId,
+      status: "denied",
+      decision: "deny",
+      reason: `Remote approval ignored because remote mode is ${mode}.`,
+      createdAt: new Date().toISOString()
+    };
+    return {
+      ok: false,
+      requestId,
+      permission,
+      results: [blockedRemoteResult(mode, "approval")]
+    };
+  }
   const allowSensitive = args.allowSensitive === true;
   const command = args.command ? redactText(config, args.command, allowSensitive) : undefined;
   const body = redactText(config, args.body, allowSensitive);
@@ -678,7 +740,7 @@ async function toolRequestPermission(args) {
     kind: "permission_request",
     text: body,
     sessionId: args.sessionId,
-    agentId: args.agentId,
+    agentId,
     allowSensitive: true,
     metadata: {
       requestId,

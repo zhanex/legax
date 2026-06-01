@@ -58,6 +58,7 @@ Do not duplicate a contract across multiple documents. Keep one canonical owner,
 - Treat CLI commands, config keys, file paths, API fields, modes, event names, and environment variables as literals wrapped in backticks.
 - State prerequisites before commands when they affect whether the command works.
 - Keep examples minimal, valid, and free of real secrets.
+- Use placeholders or relative paths for local project and workspace examples. Only use absolute paths when documenting stable OS-level install defaults, such as `/etc/legax-relay/config.yaml` and `/var/lib/legax-relay/relay-store.json`, or platform home examples.
 - Link to canonical docs instead of repeating long setup, architecture, or protocol details.
 - If a document introduces a stable enum, state value, config key, endpoint, or file format, include ownership, valid values, and compatibility notes where relevant.
 
@@ -122,6 +123,7 @@ When adding an exception, document why an external renderer, package format, or 
 - Commands, config keys, API fields, states, modes, file paths, and environment variables are marked as literals.
 - Stable enums, state values, config keys, endpoints, and file formats include ownership, valid values, and compatibility notes where relevant.
 - Examples are minimal, valid, and use placeholders instead of real secrets.
+- Local project and workspace examples do not contain machine-specific absolute paths.
 - No mojibake or replacement characters are present.
 - No file starts with a UTF-8 BOM.
 - Current package versions appear only in changelog history.

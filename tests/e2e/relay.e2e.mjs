@@ -272,6 +272,117 @@ test("self-hosted relay command queue claims, completes, expires, and rejects st
     { status: 409 }
   );
 
+  await fetchJson(`${relay.baseUrl}/api/hosts`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-b",
+      commandRefs: ["legax.ping"],
+      ttlMs: 5000
+    })
+  });
+  const generation = await fetchJson(`${relay.baseUrl}/api/generations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      hostId: "host-a",
+      adapterId: "gemini-cli"
+    })
+  });
+  const oldLease = await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      generationId: generation.generation.id,
+      hostId: "host-a",
+      ttlMs: 5000
+    })
+  });
+  const leaseBound = await fetchJson(`${relay.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      commandRef: "legax.ping",
+      targetHostId: "host-a",
+      generationId: generation.generation.id,
+      leaseToken: oldLease.lease.token,
+      payload: {}
+    })
+  });
+  const leaseClaim = await fetchJson(`${relay.baseUrl}/api/commands/${leaseBound.command.id}/claim`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({ hostId: "host-a", claimTtlMs: 5000 })
+  });
+  await fetchJson(`${relay.baseUrl}/api/leases/${oldLease.lease.id}/release`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      hostId: "host-a",
+      fencingToken: oldLease.lease.fencingToken,
+      leaseToken: oldLease.lease.token
+    })
+  });
+  await fetchJson(`${relay.baseUrl}/api/leases/claim`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-legax-secret": relay.desktopSecret
+    },
+    skipRelayCookie: true,
+    body: JSON.stringify({
+      sessionId: relay.sessionId,
+      generationId: generation.generation.id,
+      hostId: "host-b",
+      ttlMs: 5000
+    })
+  });
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/commands/${leaseBound.command.id}/result`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": relay.desktopSecret
+      },
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        hostId: "host-a",
+        claimToken: leaseClaim.command.claimToken,
+        leaseToken: oldLease.lease.token,
+        state: "succeeded",
+        result: {}
+      })
+    }),
+    { status: 409 }
+  );
+
   const expiring = await fetchJson(`${relay.baseUrl}/api/commands`, {
     method: "POST",
     headers: {
@@ -325,7 +436,7 @@ test("self-hosted relay manages portable sessions, generations, leases, forks, a
       hostId: "host-a",
       adapterId: "gemini-cli",
       nativeSession: { provider: "gemini", id: "native-gemini-session" },
-      worktree: { path: "F:/workspace/example" },
+      worktree: { path: "fixtures/worktrees/example" },
       checkpoint: { artifactId: "checkpoint-0" }
     })
   });
@@ -1337,9 +1448,14 @@ test("self-hosted relay normalizes webhook actions into relay messages", async (
     sessionId: "relay-webhook-inbox-e2e",
     extraYaml: `
 transports:
+  - name: outbound-only-webhook
+    type: webhook
+    secret: outbound-secret
+    url: https://example.com/webhook
   - name: inbound-webhook
     type: webhook
-    secret: webhook-secret
+    inboundEnabled: true
+    inboundSecret: webhook-secret
     sessionId: relay-webhook-inbox-e2e
     defaultTarget: gemini-cli
     allowedTargets: claude-code,gemini-cli
@@ -1352,6 +1468,19 @@ transports:
       headers: { "content-type": "application/json" },
       skipRelayCookie: true,
       body: JSON.stringify({ text: "unauthorized webhook" })
+    }),
+    { status: 401 }
+  );
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/webhook/events?transport=outbound-only-webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-legax-secret": "outbound-secret"
+      },
+      skipRelayCookie: true,
+      body: JSON.stringify({ text: "outbound webhook secret must not grant ingress" })
     }),
     { status: 401 }
   );

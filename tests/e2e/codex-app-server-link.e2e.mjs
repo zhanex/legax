@@ -11,6 +11,7 @@ test("Codex App Server link dry-run reads YAML config without starting codex", a
   const relay = await startRelay(t, { sessionId: "codex-link-e2e" });
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
 codex:
+  cliBackend: app-server
   command: codex.cmd
   args:
     - app-server
@@ -83,6 +84,54 @@ codex:
   assert.equal(body.codex.sharedServerMode, "connect-or-start");
   assert.equal(body.codex.autoStartSharedServer, true);
   assert.deepEqual(body.codex.args, ["app-server", "--listen", "ws://127.0.0.1:18779"]);
+});
+
+test("Codex App Server shared websocket mode completes custom app-server args", async (t) => {
+  const relay = await startRelay(t, { sessionId: "codex-existing-ws-custom-args-e2e" });
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+codex:
+  command: codex.cmd
+  cliBackend: app-server-ws
+  useExisting: true
+  appServerUrl: ws://127.0.0.1:18781/rpc
+  sharedServerMode: connect-or-start
+  autoStartSharedServer: true
+  args:
+    - app-server
+  cwd: .
+`);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const result = await runNode(["scripts/codex-app-server-link.mjs", "--dry-run"], {
+    LEGAX_CONFIG: configPath,
+    LEGAX_SECRET: relay.desktopSecret
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const body = JSON.parse(result.stdout);
+  assert.deepEqual(body.codex.args, ["app-server", "--listen", "ws://127.0.0.1:18781"]);
+});
+
+test("Codex App Server connect-only mode does not imply shared server autostart", async (t) => {
+  const relay = await startRelay(t, { sessionId: "codex-connect-only-dry-run-e2e" });
+  const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
+codex:
+  command: codex.cmd
+  cliBackend: app-server-ws
+  useExisting: true
+  appServerUrl: ws://127.0.0.1:18779/rpc
+  sharedServerMode: connect-only
+  cwd: .
+`);
+  t.after(() => removeTempFiles(configPath, statePath, runtimeStatePath));
+
+  const result = await runNode(["scripts/codex-app-server-link.mjs", "--dry-run"], {
+    LEGAX_CONFIG: configPath,
+    LEGAX_SECRET: relay.desktopSecret
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const body = JSON.parse(result.stdout);
+  assert.equal(body.codex.sharedServerMode, "connect-only");
+  assert.equal(body.codex.autoStartSharedServer, false);
 });
 
 test("Codex App Server link connects to an existing shared websocket app-server", async (t) => {
@@ -159,6 +208,7 @@ test("Codex App Server link forwards phone text and resolves approval requests",
   const fakeCodex = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-codex-app-server.mjs").replaceAll("\\", "/");
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}
@@ -240,6 +290,7 @@ test("Codex App Server link keeps normal agent text quiet until a turn completes
   const fakeCodex = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-codex-app-server.mjs").replaceAll("\\", "/");
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}
@@ -285,6 +336,7 @@ test("Codex App Server link supports approvals and tool user-input requests", as
   const fakeCodex = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-codex-app-server.mjs").replaceAll("\\", "/");
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}
@@ -373,6 +425,7 @@ test("Codex App Server link lets phone choose CLI and resume a session before ch
   const fakeCodex = path.join(pluginRoot, "tests", "e2e", "fixtures", "fake-codex-app-server.mjs").replaceAll("\\", "/");
   const { configPath, statePath, runtimeStatePath } = await writeTempConfig(relay, `
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}
@@ -542,6 +595,7 @@ transports:
     baseUrl: ${relay.baseUrl}
     secret: ${relay.desktopSecret}
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}
@@ -636,6 +690,7 @@ transports:
     url: ${webhook.url}
     timeoutMs: 1000
 codex:
+  cliBackend: app-server
   command: ${process.execPath.replaceAll("\\", "/")}
   args:
     - ${fakeCodex}

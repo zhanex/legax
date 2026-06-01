@@ -16,7 +16,8 @@ import {
   normalizeApprovals,
   setAgentCursor,
   setAgentThreadSelection,
-  setAgentMode
+  setAgentMode,
+  shouldForwardRemoteEvent
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import {
@@ -439,6 +440,7 @@ class RelayClient {
       },
       createdAt: new Date().toISOString()
     };
+    if (!shouldForwardRemoteEvent(event.metadata.mode, kind, event.metadata)) return event;
     const results = [];
     if (this.relay) {
       try {
@@ -545,7 +547,8 @@ class GeminiCliLink {
       command: this.config.geminiCli.command,
       mode: this.mode,
       mcpConfigPath,
-      telegramSuppress: true
+      telegramSuppress: true,
+      allowWhenPaused: true
     });
     this.startPolling();
   }
@@ -567,7 +570,8 @@ class GeminiCliLink {
           if (!this.canAcceptText()) {
             await this.relay.send("status", `Phone text ignored because remote mode is ${this.mode}.`, {
               adapter: "gemini-cli",
-              mode: this.mode
+              mode: this.mode,
+              allowWhenPaused: true
             });
             continue;
           }
@@ -622,7 +626,8 @@ class GeminiCliLink {
       await this.relay.send("status", `Gemini CLI remote mode switched to ${nextMode}.`, {
         adapter: "gemini-cli",
         mode: nextMode,
-        controlMessageId: message.id
+        controlMessageId: message.id,
+        allowWhenPaused: true
       });
     }
   }

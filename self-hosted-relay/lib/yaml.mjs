@@ -4,8 +4,8 @@
 // the project's example configs use:
 //
 //   - Top-level scalars: `key: value`
-//   - Two-level nested objects: `parent:` followed by indented `key: value`
-//   - The `transports:` list: items introduced by `- ` with indented sub-keys
+//   - Indentation-based nested objects used by the example configs
+//   - Lists introduced by `- `, including lists of scalars and objects
 //   - Per-key list values: `key:` followed by indented `- value` lines
 //   - Inline comments stripped on `#` outside quoted strings
 //   - Scalars: true / false / null / numbers / single-quoted / double-quoted /
@@ -29,75 +29,70 @@ export function readYaml(filePath) {
 export function parseSimpleYaml(text) {
   const source = String(text).replace(/^\uFEFF/, "");
   const root = {};
-  let currentTop = null;
-  let currentTransport = null;
-  let currentListKey = null;
+  const lines = source.replace(/\r\n/g, "\n").split("\n")
+    .map((rawLine) => {
+      const withoutComment = stripYamlComment(rawLine);
+      if (!withoutComment.trim()) return null;
+      return {
+        indent: withoutComment.match(/^\s*/)[0].length,
+        content: withoutComment.trim()
+      };
+    })
+    .filter(Boolean);
+  const stack = [{ indent: -1, value: root }];
 
-  for (const rawLine of source.replace(/\r\n/g, "\n").split("\n")) {
-    const withoutComment = stripYamlComment(rawLine);
-    if (!withoutComment.trim()) continue;
-    const indent = withoutComment.match(/^\s*/)[0].length;
-    const content = withoutComment.trim();
+  for (let index = 0; index < lines.length; index += 1) {
+    const { indent, content } = lines[index];
+    while (stack.length > 1 && stack.at(-1).indent >= indent) stack.pop();
+    const parent = stack.at(-1).value;
 
-    if (indent === 0) {
-      const entry = parseYamlKeyValue(content);
-      if (!entry) continue;
-      currentTop = entry.key;
-      currentTransport = null;
-      currentListKey = null;
-      if (entry.value === "") root[entry.key] = entry.key === "transports" ? [] : {};
-      else {
-        root[entry.key] = parseYamlScalar(entry.value);
-        currentTop = null;
-      }
-      continue;
-    }
-
-    if (currentTop === "transports") {
-      if (content.startsWith("- ")) {
-        currentTransport = {};
-        root.transports.push(currentTransport);
-        currentListKey = null;
-        const remainder = content.slice(2).trim();
-        if (remainder) assignYamlEntry(currentTransport, remainder);
+    if (content.startsWith("- ")) {
+      if (!Array.isArray(parent)) continue;
+      const remainder = content.slice(2).trim();
+      if (!remainder) {
+        parent.push(null);
         continue;
       }
-      if (currentTransport) {
-        const entry = parseYamlKeyValue(content);
-        if (entry) {
-          if (entry.value === "") {
-            currentTransport[entry.key] = [];
-            currentListKey = entry.key;
-          } else {
-            currentTransport[entry.key] = parseYamlScalar(entry.value);
-            currentListKey = null;
-          }
-          continue;
-        }
-        if (currentListKey && content.startsWith("- ")) {
-          currentTransport[currentListKey].push(parseYamlScalar(content.slice(2).trim()));
-        }
-      }
-      continue;
-    }
-
-    if (currentTop && root[currentTop] && typeof root[currentTop] === "object") {
-      if (currentListKey && content.startsWith("- ")) {
-        root[currentTop][currentListKey].push(parseYamlScalar(content.slice(2).trim()));
-        continue;
-      }
-      const entry = parseYamlKeyValue(content);
-      if (!entry) continue;
-      if (entry.value === "") {
-        root[currentTop][entry.key] = [];
-        currentListKey = entry.key;
+      const entry = parseYamlKeyValue(remainder);
+      if (entry) {
+        const item = {};
+        parent.push(item);
+        assignYamlEntryWithLookahead(item, entry, lines, index, indent);
+        stack.push({ indent, value: item });
       } else {
-        root[currentTop][entry.key] = parseYamlScalar(entry.value);
-        currentListKey = null;
+        parent.push(parseYamlScalar(remainder));
       }
+      continue;
+    }
+
+    if (!parent || typeof parent !== "object" || Array.isArray(parent)) continue;
+    const entry = parseYamlKeyValue(content);
+    if (!entry) continue;
+    const assigned = assignYamlEntryWithLookahead(parent, entry, lines, index, indent);
+    if (assigned && typeof assigned === "object") {
+      stack.push({ indent, value: assigned });
     }
   }
   return root;
+}
+
+function assignYamlEntryWithLookahead(target, entry, lines, index, indent) {
+  if (entry.value !== "") {
+    target[entry.key] = parseYamlScalar(entry.value);
+    return null;
+  }
+  const next = nextNestedLine(lines, index, indent);
+  const value = next?.content.startsWith("- ") ? [] : {};
+  target[entry.key] = value;
+  return value;
+}
+
+function nextNestedLine(lines, index, indent) {
+  for (let scan = index + 1; scan < lines.length; scan += 1) {
+    if (lines[scan].indent <= indent) return null;
+    return lines[scan];
+  }
+  return null;
 }
 
 export function stripYamlComment(line) {
@@ -123,7 +118,15 @@ export function stripYamlComment(line) {
 }
 
 export function parseYamlKeyValue(content) {
-  const index = content.indexOf(":");
+  let index = -1;
+  for (let scan = 0; scan < content.length; scan += 1) {
+    if (content[scan] !== ":") continue;
+    const next = content[scan + 1] ?? "";
+    if (next === "" || /\s/.test(next)) {
+      index = scan;
+      break;
+    }
+  }
   if (index < 0) return null;
   return { key: content.slice(0, index).trim(), value: content.slice(index + 1).trim() };
 }

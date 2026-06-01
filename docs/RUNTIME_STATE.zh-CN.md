@@ -56,7 +56,7 @@ Runtime state 不拥有：
     "name": "Session name",
     "preview": "Last message preview",
     "resumeRef": "native-resume-ref",
-    "cwd": "F:/workspace/project",
+    "cwd": "PROJECT_PATH",
     "updatedAt": "2026-05-26T00:00:00.000Z",
     "createdAt": "2026-05-26T00:00:00.000Z",
     "source": "cli"

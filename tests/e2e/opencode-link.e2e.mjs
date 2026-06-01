@@ -35,7 +35,7 @@ test("OpenCode link lists projects, selects a session, replays history, and send
       {
         id: "oc-project-1",
         title: "Project Alpha thread",
-        cwd: "F:/work/project-alpha",
+        cwd: "fixtures/projects/project-alpha",
         updatedAt: "2026-05-01T11:00:00.000Z"
       },
       {
@@ -46,7 +46,7 @@ test("OpenCode link lists projects, selects a session, replays history, and send
       {
         id: "oc-archived",
         title: "Archived thread",
-        cwd: "F:/work/project-alpha",
+        cwd: "fixtures/projects/project-alpha",
         archived: true,
         updatedAt: "2026-05-01T12:00:00.000Z"
       }
@@ -136,7 +136,7 @@ opencode:
     assert.equal(history[0].text, "Show me the current status.");
     assert.equal(history[1].metadata.author, "agent");
     assert.equal(history[1].text, "Project Alpha is healthy.\nNo deployment blockers.");
-    assert.equal(history[1].metadata.cwd, "F:/work/project-alpha");
+    assert.equal(history[1].metadata.cwd, "fixtures/projects/project-alpha");
   }, { timeoutMs: 7000 });
 
   await postRelayMessage(relay, {
