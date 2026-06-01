@@ -19,7 +19,7 @@
 </p>
 
 <p>
-  <img alt="Legax 项目概览" src="docs/image/legax-overview.png" width="820">
+  <img alt="Legax 项目概览" src="docs/image/legax-overview-zh-CN.png" width="820">
 </p>
 
 </div>

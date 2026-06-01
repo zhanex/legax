@@ -133,6 +133,9 @@ function successfulStepBody(run, stepId, overrides = {}) {
   return {
     commandId: step.commandId,
     state: "succeeded",
+    leaseHostId: run.leaseHostId,
+    fencingToken: run.fencingToken,
+    leaseToken: run.leaseToken,
     result: {
       actionId: step.commandRef,
       summary: `${step.commandRef} completed`,
@@ -394,6 +397,35 @@ test("relay blocks green when red or green verification fails and cancels on gat
   });
   assert.equal(greenReviewFailed.run.state, "failed");
   assert.equal(greenReviewFailed.run.steps.refactor.state, "cancelled");
+});
+
+test("relay rejects stale lease tokens on direct LPS mutating step results", async (t) => {
+  const relay = await startRelay(t, { sessionId: "lps-stale-lease-e2e" });
+  let { run } = await createDefaultRun(relay, {
+    runId: "lps-stale-lease-run",
+    sessionId: "lps-stale-lease-e2e",
+    hostId: "lps-stale-lease-host"
+  });
+
+  for (const stepId of ["requirements", "design_basic", "design_detail", "test_spec"]) {
+    run = await completeStep(relay, run, stepId);
+  }
+  assert.equal(run.steps.red.state, "running");
+
+  await assert.rejects(
+    fetchJson(`${relay.baseUrl}/api/workflow-runs/${run.id}/steps/red/result`, {
+      method: "POST",
+      headers: desktopHeaders(relay),
+      skipRelayCookie: true,
+      body: JSON.stringify({
+        ...successfulStepBody(run, "red"),
+        leaseHostId: run.leaseHostId,
+        fencingToken: run.fencingToken,
+        leaseToken: "stale-lease-token"
+      })
+    }),
+    { status: 409 }
+  );
 });
 
 test("daemon executes LPS TDD actions and resumes workflow state after restart", async (t) => {
