@@ -106,6 +106,8 @@ Behavioral constants should be named, scoped, and reviewed.
 Follow `.github/CONTRIBUTING.md` before staging or committing.
 
 - Inspect `git status --short` and the full diff before staging.
+- Before pushing or opening a PR, fetch the remote target branch and confirm whether it has advanced. If it has, update the working branch against the latest target branch using the repository's chosen merge or rebase strategy, resolve conflicts locally, and rerun the relevant checks before pushing.
+- Do not run `git pull` blindly in a dirty worktree; prefer `git fetch origin` followed by an explicit merge or rebase decision.
 - Do not stage local runtime artifacts, large binaries, `data/` residue, machine-specific config, lock files, or tracked secrets.
 - Keep documentation pairs in the same commit.
 - Use short imperative commit subjects. A topic prefix is welcome when it helps scanning.

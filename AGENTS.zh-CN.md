@@ -106,6 +106,8 @@ Legax 是面向 Agent CLI 的 session 管理与工作流编排层。保持这些
 staging 或提交前遵循 `.github/CONTRIBUTING.zh-CN.md`。
 
 - staging 前检查 `git status --short` 和完整 diff。
+- 推送或创建 PR 前，先 fetch 远端目标分支，并确认目标分支是否已经推进。如果已经推进，按仓库约定的 merge 或 rebase 策略把当前工作分支更新到最新目标分支，本地解决冲突，并在推送前重新运行相关检查。
+- 不要在脏工作区中盲目执行 `git pull`；优先使用 `git fetch origin`，然后显式决定 merge 还是 rebase。
 - 不要 stage 本地运行产物、大二进制、`data/` 残留、机器相关配置、lock 文件或已跟踪密钥。
 - 文档语言版本必须在同一个 commit 中成对维护。
 - 提交标题使用简短祈使句。有助于扫描时可以加主题前缀。
