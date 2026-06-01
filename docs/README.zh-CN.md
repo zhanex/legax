@@ -4,6 +4,30 @@
 
 用这个索引选择最短的相关文档。根目录 README 只保留项目定位和快速开始；更深入的材料放在这里。
 
+## 如何使用这棵树
+
+- 编码 Agent 从 `AGENTS.md` 开始，再通过 [LLM 上下文](context_for_llms.zh-CN.md) 选择最小的任务相关上下文集合。
+- 人类贡献者按工作范围使用本索引。小改动不需要阅读所有设计文档。
+- 架构和契约文档在各自领域内是必须遵守的规范，即使某个任务只把其中一部分加载进上下文。
+- 如果一个变更跨越多个领域，加载相关分支文档的并集。
+
+```text
+docs/
+  README.zh-CN.md            文档树和路由
+  context_for_llms.zh-CN.md  Agent 精简地图
+  CHANGE_MATRIX.zh-CN.md     变更路径到文档与聚焦测试
+  ARCHITECTURE.zh-CN.md      全局职责模型
+  ENGINEERING_GUIDE.zh-CN.md 命名、常量、职责和模式
+  CONFIGURATION.zh-CN.md     配置与 YAML parser 契约
+  RELAY_API.zh-CN.md         relay endpoint 契约
+  RELAY_STORE.zh-CN.md       relay 侧持久记录
+  RUNTIME_STATE.zh-CN.md     本地 daemon/adapter 协调
+  STATE_MACHINES.zh-CN.md    mode、approval、command、workflow 转换
+  OBSERVABILITY.zh-CN.md     日志、health、status、audit、diagnostics
+  DOCUMENTATION.zh-CN.md     文档语言配对与审查规则
+  adr/                       已接受的架构决策
+```
+
 ## 用户文档
 
 | 文档 | 用途 |
@@ -21,17 +45,26 @@
 | --- | --- |
 | [架构](ARCHITECTURE.zh-CN.md) | 控制面、能力面、通信面、relay 接管的 Telegram/飞书路由、daemon、运行时状态和适配器设计。 |
 | [功能边界](FUNCTIONAL_BOUNDARIES.zh-CN.md) | Legax 负责什么、刻意不负责什么，以及非目标。 |
+| [工程规范](ENGINEERING_GUIDE.zh-CN.md) | 命名、常量、目录职责、设计模式、禁止模式、错误处理和测试规则。 |
+| [变更矩阵](CHANGE_MATRIX.zh-CN.md) | 面向编码 Agent，把变更路径映射到必读文档和聚焦验证命令。 |
+| [配置契约](CONFIGURATION.zh-CN.md) | YAML 子集、配置段落、路径规则、transport 字段和 adapter 字段类别。 |
+| [Relay API](RELAY_API.zh-CN.md) | Relay HTTP 端点、鉴权类别、状态码，以及 retry/stale-token 行为。 |
 | [Relay Store](RELAY_STORE.zh-CN.md) | `legax.relay/1` 中的会话、generation、lease、handoff、artifact、主机、命令、收件箱和工作流记录。 |
+| [Runtime State](RUNTIME_STATE.zh-CN.md) | 本地 daemon/adapter 协调 schema、queue、cursor、mode、launch request 和 lock 规则。 |
 | [Legax 协议](LEGAX_PROTOCOL.zh-CN.md) | 跨适配器事件契约、配对信息、可迁移会话、checkpoint artifact 和受限工作流 API。 |
+| [状态机](STATE_MACHINES.zh-CN.md) | Runtime mode、daemon、approval、lease、handoff、command、workflow 和 session 选择转换。 |
+| [兼容性矩阵](COMPATIBILITY.zh-CN.md) | 外部 CLI 和远端 surface 的兼容性假设与审查清单。 |
 | [LLM 上下文](context_for_llms.zh-CN.md) | 供编码 Agent 修改仓库时使用的仓库地图与安全规则。 |
 | [Adapter 一致性要求](ADAPTER_CONFORMANCE.zh-CN.md) | 路由、会话、审批、重启行为和测试方面的共享适配器要求。 |
 | [扩展 Legax](EXTENDING.zh-CN.md) | 添加适配器、传输、配置字段和测试。 |
+| [架构决策记录](adr/README.zh-CN.md) | 塑造项目架构的持久决策与约束。 |
 
 ## 维护者文档
 
 | 文档 | 用途 |
 | --- | --- |
 | [文档规范](DOCUMENTATION.zh-CN.md) | 语言配对、编码、密钥扫描和审查清单。 |
+| [可观测性](OBSERVABILITY.zh-CN.md) | 日志、audit、health、status、retention 和诊断规则。 |
 | [发布指南](RELEASE.zh-CN.md) | 本地发布检查和包发布流程。 |
 | [路线图](ROADMAP.zh-CN.md) | 可能的优先级和明确的非目标。 |
 | [隐私说明](PRIVACY.zh-CN.md) | 数据处理、存储、第三方传输和操作者选择。 |

@@ -1,79 +1,121 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+English | [Simplified Chinese](AGENTS.zh-CN.md)
+
+This file is the repository instruction contract for AI coding agents working on Legax, including Codex, Claude Code, Gemini CLI, OpenCode, and other LLM coding tools. It applies across supported LLM agent environments.
+
+Use this file as the entry point, then load only the shortest task-relevant documents listed below. A document can be binding even when you do not load it into context; load the relevant one before editing that area.
+
+If the user or working context uses Simplified Chinese, agents may read `AGENTS.zh-CN.md` as the equivalent translation. It is not a separate rule set; if the two files diverge, treat this file as the source of truth and update both.
+
+## Required Operating Rules
+
+- Follow the repository architecture and safety boundaries before local style preferences.
+- Keep the project dependency-free: no `node_modules`, no bundler, and no new npm dependency unless the design has been explicitly accepted.
+- Run against the Node 18+ standard library.
+- Keep configuration YAML-only. Use `scripts/lib/yaml.mjs`; do not add JSON config support or a YAML dependency casually.
+- Keep cross-process adapter coordination in `scripts/lib/runtime-state.mjs`; do not create sibling state files for cursors, selected sessions, modes, or launch requests.
+- Keep MCP as a capability layer. MCP tools may notify, poll, or request permission, but must not start or stop adapter processes.
+- Never simulate UI clicks, auto-approve native prompts, or bypass an agent's security policy.
+- Do not route remote workflow input to arbitrary shell, `eval`, script, prompt, command, or free-form executable args.
+- Do not hard-code behavioral constants casually. New hard-coded values require human review unless they are trivial local literals such as `0`, `1`, `-1`, `true`, `false`, or `null`.
+- Keep documentation language pairs together: English `.md` with `.zh-CN.md`, and `config.example*.yaml` with matching `config.example*.zh-CN.yaml`.
+- Keep tracked documentation release-quality. Do not commit implementation plans, drafts, temporary specs, scratch notes, audit notes, or agent execution transcripts as docs.
+- Before staging, committing, opening a PR, or claiming documentation changes are ready, audit changed documentation against `docs/DOCUMENTATION.md`; do not rely on `npm run check:docs` alone for content placement, writing-standard, or structure issues.
+- If you add a script or E2E test file, append it to the explicit `package.json` check or test list.
+
+## Required Document Routing
+
+| Work area | Load before editing |
+| --- | --- |
+| Any non-trivial code change | `docs/context_for_llms.md`, `docs/ENGINEERING_GUIDE.md`, `docs/CHANGE_MATRIX.md` |
+| Architecture, lifecycle, or plane ownership | `docs/ARCHITECTURE.md`, `docs/FUNCTIONAL_BOUNDARIES.md`, `docs/adr/README.md` |
+| Adapter behavior | `docs/ADAPTERS.md`, `docs/ADAPTER_CONFORMANCE.md`, `docs/EXTENDING.md` |
+| MCP tools, permission MCP, or skill/plugin metadata | `docs/CODEX_PLUGIN.md`, `skills/legax/SKILL.md`, `docs/OBSERVABILITY.md` |
+| Daemon supervision, modes, launch requests, local queues | `docs/RUNTIME_STATE.md`, `docs/STATE_MACHINES.md` |
+| Relay HTTP API | `docs/RELAY_API.md`, `docs/RELAY_STORE.md`, `docs/LEGAX_PROTOCOL.md` |
+| Relay store schema or portable sessions | `docs/RELAY_STORE.md`, `docs/LEGAX_PROTOCOL.md` |
+| Config fields or parser behavior | `docs/CONFIGURATION.md`, `config.example.yaml`, `config.example.zh-CN.yaml` |
+| Transports, Telegram, Feishu/Lark, webhook routing | `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, `docs/FEISHU_LARK.md`, `docs/COMPATIBILITY.md` |
+| Workflows, checkpoint artifacts, worktree-lite | `docs/LEGAX_PROTOCOL.md`, `docs/RELAY_API.md`, `docs/RELAY_STORE.md`, `docs/STATE_MACHINES.md` |
+| Authentication, secrets, privacy, public relay exposure | `docs/RELAY_API.md`, `docs/OBSERVABILITY.md`, `docs/PRIVACY.md`, `.github/SECURITY.md` |
+| Logging, health, status, audit, diagnostics | `docs/OBSERVABILITY.md` |
+| Documentation changes | `docs/DOCUMENTATION.md`, `docs/README.md` |
+| Release, packages, publishing | `docs/RELEASE.md` |
+| Commits or PR preparation | `.github/CONTRIBUTING.md` |
+
+Use [docs/README.md](docs/README.md) as the full documentation tree. Use [docs/context_for_llms.md](docs/context_for_llms.md) as the compact map for coding agents.
 
 ## Commands
 
-This is a **dependency-free Node.js project** (no `node_modules`, no bundler). Everything runs against the Node 18+ standard library.
+This is a dependency-free Node.js project.
 
 ```bash
 npm run ci                            # full CI gate: npm test + check:docs
 npm test                              # local code gate: check:node + check:shell + test:e2e
 npm run check:node                    # node --check on every script (syntax only)
-npm run check:docs                    # docs/i18n/secret/BOM gate (scripts/check-docs.mjs)
+npm run check:docs                    # docs/i18n/secret/BOM gate
 npm run check:shell                   # bash -n on installer + service scripts
-npm run test:e2e                      # node --test over tests/e2e/*.e2e.mjs (excludes real-clients)
-npm run test:e2e:real                 # opt-in: requires LEGAX_REAL_CLIENTS=1 and real codex/Codex/gemini CLIs on PATH
+npm run test:e2e                      # node --test over tests/e2e/*.e2e.mjs, excluding real clients
+npm run test:e2e:real                 # opt-in: requires LEGAX_REAL_CLIENTS=1 and real CLIs on PATH
 npm run test:real:messages            # real-local-message smoke test
 ```
 
-Run a single E2E file: `node --test tests/e2e/<name>.e2e.mjs`. Run a single test inside it: `node --test --test-name-pattern '<substring>' tests/e2e/<name>.e2e.mjs`.
+Run one E2E file:
 
-`npm run ci` is the contract enforced by CI; if you add a new script or test file, also append it to the corresponding `check:node` / `test:e2e` list in `package.json` — the lists are explicit, not glob-driven.
+```bash
+node --test tests/e2e/<name>.e2e.mjs
+```
 
-Dry-run the supervisor without spawning real CLIs: `node scripts/legax-daemon.mjs --dry-run`.
+Run one E2E test by name:
 
-## Contribution and commits
+```bash
+node --test --test-name-pattern '<substring>' tests/e2e/<name>.e2e.mjs
+```
 
-Follow `.github/CONTRIBUTING.md` when preparing changes for commit:
+Dry-run the supervisor without spawning real CLIs:
 
-- Treat `npm run ci` as the full merge gate (`npm test` plus `check:docs`). For targeted bugfix work, run the narrow regression tests first, then the relevant broader gate, and state any full-gate failures explicitly instead of implying a clean CI.
-- Documentation-only commits may use `npm run check:docs` locally, but code commits should at least run the affected E2E file(s), `npm run check:node`, and any daemon/transport integration tests touched by the change.
-- Keep documentation pairs in the same commit: English `.md` with `.zh-CN.md`, and `config.example.yaml` with `config.example.zh-CN.yaml`.
-- Before staging, inspect `git status --short` and the full diff. Do not stage local runtime artifacts, large binaries, `data/` residue, machine-specific config, lock files, or tracked secrets.
-- Commit subjects should be short imperative sentences. Conventional Commits are not required; a topic prefix is preferred when it helps scanning, for example `telegram: refresh active pinned context`, `daemon: route opencode launches`, or `docs: clarify relay pairing`.
-- Use a commit body only when the *why* is not obvious from the subject and diff.
+```bash
+node scripts/legax-daemon.mjs --dry-run
+```
 
-## Architecture
+`npm run ci` is the merge contract. Documentation-only changes may use `npm run check:docs`; code changes should run the narrow affected test first, then the relevant broader gate.
 
-The project is a session-management and workflow orchestration layer for agent CLIs. It connects supported agent CLIs to remote interaction surfaces through relay, Telegram, Feishu/Lark, or webhook transports. Read `docs/ARCHITECTURE.md` first — the design uses **three planes** that must not be conflated when changing code:
+## Architecture Reminder
 
-- **Control plane (CLI adapters)** — owns process lifecycle, session selection/continuation, and structured-output parsing. One adapter per agent under `scripts/`: `codex-app-server-link.mjs` (JSON-RPC over WebSocket app-server), `claude-code-link.mjs` (`claude -p` stream-json), `gemini-cli-link.mjs` (`gemini` stream-json), `opencode-link.mjs` (OpenCode HTTP server). Each adapter is a long-lived process; the daemon supervises them.
-- **Capability plane (MCP)** — `scripts/mcp-server.mjs` is a generic stdio MCP server exposing `legax_send/poll/request_permission/status`. `scripts/claude-permission-mcp-server.mjs` is a Claude-specific permission-prompt MCP that mirrors permission asks to the phone and returns the decision through Claude's permission hook. MCP is a **capability layer, not a lifecycle manager** — never use it to start/stop processes.
-- **Communication plane (transports)** — `scripts/lib/outbound-transports.mjs` (relay POST, Telegram sendMessage, generic webhook) and `scripts/lib/inbound-transports.mjs` (Telegram parsing/routing helpers). The daemon owns relay `/api/messages` polling and Telegram `getUpdates` while running, writes messages into per-agent inbox queues, and adapters launched by the daemon only drain their inbox. Standalone adapters use a single-poller fallback.
+Legax is a session-management and workflow orchestration layer for agent CLIs. Keep these ownership boundaries separate:
 
-The **unified daemon** (`scripts/legax-daemon.mjs`) is what users normally run. It reads one `config.yaml`, owns remote inbound routing, supervises all enabled adapters, restarts crashed ones with bounded backoff, writes per-adapter MCP config (`mcpAutoConfigure`) before launch, and handles **on-demand launches** for `autoStart: false` adapters via launch requests in runtime state. If only an individual adapter is running, it cannot start siblings.
+- Control plane: CLI adapters under `scripts/*-link.mjs` own process interaction, session selection, structured-output parsing, and native approval callback integration.
+- Capability plane: MCP servers expose tools and permission prompts, but do not manage adapter lifecycle.
+- Communication plane: relay, Telegram, Feishu/Lark, webhook, inbound helpers, and outbound transports own remote message delivery and routing.
+- Runtime state: `scripts/lib/runtime-state.mjs` is the local daemon/adapter coordination source of truth.
+- Relay store: `data/relay-store.json` uses `legax.relay/1` and owns portable relay-side state.
 
-### Cross-process coordination via runtime state
+## Constant Policy
 
-`scripts/lib/runtime-state.mjs` is the **single source of truth shared between the daemon and every adapter**. It persists adapter cursors, dynamic modes, Telegram chat selections, selected Codex thread metadata, per-agent inbound queues, and pending launch requests to `data/runtime-state.json` (configurable via `runtimeStatePath`). Writes use a temp-file + retrying atomic rename to tolerate concurrent writes on Windows (EPERM/EACCES/EBUSY). When you add new cross-process state, extend this module — do not invent a sibling state file. The relay's own state lives separately at `data/relay-store.json`; the generic MCP server's state at `data/mcp-state.json`.
+Behavioral constants should be named, scoped, and reviewed.
 
-### Per-adapter session model (these differ and matter)
+- Prefer named constants for timeouts, intervals, retry counts, TTLs, ports, body-size limits, schema versions, event kinds, modes, command refs, status strings, path names, and environment variable names.
+- Include units in names where relevant, for example `DEFAULT_RELAY_POLL_INTERVAL_MS`.
+- Keep constants near the module that owns the behavior. Share them through a domain module only when multiple owners need the same contract.
+- Do not create a broad catch-all constants file.
+- If a value must stay inline for readability, the reviewer must be able to see why it is not a behavioral constant.
 
-- **Codex**: existing-session mode connects to a shared `codex app-server --listen ws://...` over WebSocket (`cliBackend: app-server-ws`). Local visibility requires the user to start `codex --remote ws://127.0.0.1:18779`; the desktop app's embedded stdio app-server is **not** a shared backend. Approval uses JSON-RPC `requestApproval`.
-- **Claude Code**: launches `claude -p` with stream-json. Existing-session mode adds `--continue` or `--resume <id>` and discovers sessions from local persisted JSONL history. Permission is delivered through `claude-permission-mcp-server.mjs` configured as Claude's permission-prompt MCP.
-- **Gemini CLI**: one headless turn per phone message via `--prompt`; resume is `--resume latest` or a configured id; sessions come from `gemini --list-sessions`. Daemon/headless runs in untrusted directories require `trustWorkspace: true` (sets `GEMINI_CLI_TRUST_WORKSPACE=true`).
-- **OpenCode**: connects to `opencode serve` through `cliBackend: server-http`; `serverMode: connect-or-start` can start the server on demand. Sessions come from `GET /session`; phone text goes to `POST /session/:id/message`. OpenCode-native permission callback bridging is not implemented yet.
+## Contribution and Commits
 
-Phone approval decisions are honored only in `interactive` and `approval-only` modes. `paused` is a hard stop and cannot be cleared by selecting an adapter — only `/mode <agentId> interactive` clears it. Selecting an adapter from Telegram/phone activates `interactive` for non-paused adapters and returns its session list.
+Follow `.github/CONTRIBUTING.md` before staging or committing.
 
-### Hand-rolled YAML parser
+- Inspect `git status --short` and the full diff before staging.
+- Before pushing or opening a PR, fetch the remote target branch and confirm whether it has advanced. If it has, update the working branch against the latest target branch using the repository's chosen merge or rebase strategy, resolve conflicts locally, and rerun the relevant checks before pushing.
+- Do not run `git pull` blindly in a dirty worktree; prefer `git fetch origin` followed by an explicit merge or rebase decision.
+- Do not stage local runtime artifacts, large binaries, `data/` residue, machine-specific config, lock files, or tracked secrets.
+- Keep documentation pairs in the same commit.
+- Use short imperative commit subjects. A topic prefix is welcome when it helps scanning.
+- Use a commit body only when the reason is not clear from the subject and diff.
 
-There is **no YAML library**. Repo scripts use the shared hand-rolled parser in `scripts/lib/yaml.mjs`; the standalone deployable relay keeps an inline copy because the installer can copy just `self-hosted-relay/server.mjs`. The parser supports the subset the example config uses: top-level scalars, nested objects two levels deep, the `transports:` list with sub-lists, and inline comments outside quotes. **JSON config is intentionally not supported** — users must use YAML. If you need a new config shape, extend the shared parser and any standalone inline copies in lockstep, then add coverage.
+## Verification
 
-## Documentation rules (enforced by `check:docs`)
-
-- Every prose `.md` and every `config.example*.yaml` file must ship as a **language pair**: `*.md` (English) + `*.zh-CN.md` (Simplified Chinese), `config.example*.yaml` + matching `config.example*.zh-CN.yaml`. When you change one, change the other in the same commit.
-- Files must be UTF-8 **without BOM**. Do not mix English prose into a `.zh-CN.md` (or vice versa) beyond short cross-links, product names, CLI commands, config keys, and code blocks.
-- The doc gate also scans for accidentally committed Telegram bot tokens, OpenAI-style `sk-...` keys, and GitHub `gh[pousr]_...` tokens. Use placeholders (`replace-with-a-long-random-secret`, `YOUR_RELAY_HOST`, `TELEGRAM_BOT_TOKEN`).
-- See `docs/DOCUMENTATION.md` for the full review checklist.
-
-## Testing notes
-
-- E2E tests spawn real adapter processes and a fake relay/Codex app-server (`tests/e2e/fixtures/`). They share helpers in `tests/e2e/helpers.mjs` for spawning, port allocation, and temp config generation.
-- `tests/e2e/real-clients.e2e.mjs` is gated by `LEGAX_REAL_CLIENTS=1` and only runs when actual `codex`, `Codex`, and `gemini` binaries are on PATH; it is not part of `npm test`.
-- On Windows, when direct `codex` calls are blocked by execution policy, set `codex.command: codex.cmd` in test/dev config.
-
-## Permission model (do not violate)
-
-Legax **mirrors** native approval prompts to the phone and returns the decision through the agent's structured callback when the adapter supports one (Codex JSON-RPC, Claude permission-prompt MCP, Gemini's own approval mode). It must never simulate UI clicks, auto-approve a native prompt, or bypass an agent's security policy. TUI/PTY backends are a fallback only and must be treated as high-trust remote terminal control.
+- For docs-only changes, audit changed documentation against `docs/DOCUMENTATION.md`, then run `npm run check:docs`.
+- When changing documentation gates, routing, indexes, `AGENTS.md`, `docs/CHANGE_MATRIX.md`, or `scripts/check-docs.mjs`, also run `node --test tests/e2e/docs.e2e.mjs`.
+- For code changes, run the affected E2E file or narrow check first, then `npm run check:node`, then the relevant broader gate.
+- Before claiming a branch is ready, run `npm run ci` or explicitly state why it was not run.
