@@ -1,8 +1,9 @@
 import {
   drainAgentInboxMessages,
   enqueueAgentInboxMessages,
-  activateAgentInteractive,
+  canAcceptText,
   getAgentTransportCursor,
+  getAgentRuntime,
   getTransportSelection,
   isBroadcastTarget,
   requestAgentLaunch,
@@ -75,10 +76,39 @@ function knownAgentIds(config, currentAgent) {
     config.gemini?.agentId,
     config.opencode?.agentId,
     config.codexAppServer?.agentId,
+    config.codexDesktopMirror?.agentId,
     config.claudeCode?.agentId,
     config.geminiCli?.agentId,
     currentAgent?.agentId
   ].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function enabledRelayTransport(config) {
+  return (Array.isArray(config.transports) ? config.transports : [])
+    .some((transport) => transport?.enabled !== false && transport?.type === "relay" && transport?.baseUrl);
+}
+
+function configuredAgentForId(config, agentId, currentAgent) {
+  const candidates = [
+    ...(Array.isArray(config.agents) ? config.agents : []),
+    config.codex,
+    config.claude,
+    config.gemini,
+    config.opencode,
+    config.codexAppServer,
+    config.codexDesktopMirror,
+    config.claudeCode,
+    config.geminiCli,
+    currentAgent
+  ];
+  return candidates.find((candidate) => candidate && (candidate.agentId ?? candidate.id) === agentId)
+    ?? { agentId };
+}
+
+function targetCanAcceptText(config, targetAgentId, currentAgent) {
+  const target = configuredAgentForId(config, targetAgentId, currentAgent);
+  const runtime = getAgentRuntime(config, { ...target, agentId: target.agentId ?? target.id });
+  return canAcceptText(config, runtime.mode);
 }
 
 function telegramCreatedAt(message) {
@@ -544,9 +574,11 @@ export async function pollInboundTransports(config, agent, options = {}) {
     return drainAgentInboxMessages(config, agent);
   }
   const messages = [];
+  const relayOwnsTelegram = enabledRelayTransport(config);
   for (const transport of Array.isArray(config.transports) ? config.transports : []) {
     if (transport.enabled === false) continue;
     if (transport.type !== "telegram") continue;
+    if (relayOwnsTelegram) continue;
     try {
       messages.push(...await pollTelegram(config, agent, transport, options));
     } catch (error) {
@@ -566,7 +598,9 @@ export function routeInboundMessages(config, agent, messages, options = {}) {
     updateAgentCursorsFromMessages(config, expanded);
   }
   const currentMessages = expanded.filter((message) => message.targetAgentId === agent.agentId);
-  const queuedMessages = expanded.filter((message) => message.targetAgentId && message.targetAgentId !== agent.agentId);
+  const queuedMessages = expanded
+    .filter((message) => message.targetAgentId && message.targetAgentId !== agent.agentId)
+    .filter((message) => message.type !== "text" || targetCanAcceptText(config, message.targetAgentId, agent));
   enqueueAgentInboxMessages(config, queuedMessages);
   const drained = options.drain === false ? [] : drainAgentInboxMessages(config, agent);
   return [...drained, ...currentMessages];
@@ -634,9 +668,7 @@ function requestLaunchesForMessages(config, agent, messages) {
     if (!targetAgentId || targetAgentId === agent.agentId || isBroadcastTarget(targetAgentId)) continue;
     if (!knownAgents.has(targetAgentId)) continue;
     if (!messageShouldWakeAgent(message)) continue;
-    if (message.type === "text") {
-      activateAgentInteractive(config, { agentId: targetAgentId });
-    }
+    if (message.type === "text" && !targetCanAcceptText(config, targetAgentId, agent)) continue;
     requestAgentLaunch(config, targetAgentId, {
       source: message.transport ?? "inbound",
       reason: message.type === "control" ? message.action : message.type,

@@ -1115,7 +1115,7 @@ export async function dispatchAdditionalTransports(config, event, skipTransportN
           results.push({
             transport: transport.name,
             type: transport.type,
-            ok: true,
+            ok: false,
             skipped: true,
             reason: "relay-owned"
           });

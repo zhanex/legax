@@ -108,7 +108,7 @@ generation 是一个 portable relay session 下的一次执行尝试或分支：
     "id": "native-cli-session"
   },
   "worktree": {
-    "path": "F:/workspace/project"
+    "path": "PROJECT_PATH"
   },
   "checkpoint": {
     "artifactId": "checkpoint-1"

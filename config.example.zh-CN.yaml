@@ -24,7 +24,7 @@ relay:
     enabled: true
     path: ./data/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80                             # 设为 0 表示不存消息正文预览
+    textPreview: 0                              # 默认只记录 metadata，不存消息正文预览
 
 mcp:
   enabled: true
@@ -64,7 +64,7 @@ daemon:
   commandPollIntervalMs: 1000
   commandClaimTtlMs: 30000    # daemon claim 一个 relay command 后的最长执行时间，超时后可 retry/failed
   projectRoots:               # Telegram Mini App 项目选择器可浏览的本机目录
-    - F:/workspace
+    - ./workspace              # 替换为你希望项目选择器浏览的本地目录
   projectRootHiddenNames:
     - .git
     - node_modules

@@ -65,7 +65,13 @@ export function resolveProjectDirectory(config, { rootId, relativePath = "", pro
   if (roots.length === 0) {
     throw new Error("No daemon.projectRoots are configured.");
   }
-  const root = roots.find((item) => item.id === rootId) ?? roots[0];
+  const requestedRootId = trimString(rootId);
+  const root = requestedRootId
+    ? roots.find((item) => item.id === requestedRootId)
+    : roots[0];
+  if (!root) {
+    throw new Error(`Unknown project root: ${requestedRootId}`);
+  }
   if (!root.readable) {
     throw new Error(`Project root is not readable: ${root.path}`);
   }

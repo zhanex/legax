@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { pollInboundTransports } from "../../scripts/lib/inbound-transports.mjs";
+import { pollInboundTransports, routeInboundMessages } from "../../scripts/lib/inbound-transports.mjs";
 import { buildTelegramMessagePayloads, dispatchAdditionalTransports } from "../../scripts/lib/outbound-transports.mjs";
 import { telegramApiUrl } from "../../scripts/lib/telegram-transport.mjs";
 import { dataDir, removeTempFiles } from "./helpers.mjs";
@@ -126,12 +126,136 @@ test("Telegram inbound messages keep default routing, request-id routing, and cu
   assert.equal(claudeMessages[0].targetAgentId, "claude-code");
   assert.equal(claudeMessages[0].decision, "approve");
 
-  const state = JSON.parse(await fs.readFile(runtimeStatePath, "utf8"));
+  const state = await fs.access(runtimeStatePath).then(
+    () => fs.readFile(runtimeStatePath, "utf8").then(JSON.parse),
+    () => ({ sessions: {} })
+  );
   assert.equal(
     state.sessions["telegram-inbound-e2e"].agents["codex-cli"].transportCursors["telegram:telegram"].offset,
     104
   );
   assert.equal(calls[0].body.offset, undefined);
+});
+
+test("relay-owned Telegram transports are not polled directly", async (t) => {
+  await fs.mkdir(dataDir, { recursive: true });
+  const runtimeStatePath = path.join(
+    dataDir,
+    `runtime-state-relay-owned-telegram-${process.pid}-${Date.now()}.json`
+  ).replaceAll("\\", "/");
+  t.after(() => removeTempFiles(runtimeStatePath));
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ ok: true, result: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const messages = await pollInboundTransports({
+    sessionId: "relay-owned-telegram-e2e",
+    runtimeStatePath,
+    transports: [
+      { name: "relay", type: "relay", enabled: true, baseUrl: "http://127.0.0.1:8787" },
+      { name: "telegram", type: "telegram", enabled: true, botToken: "test-token", chatId: 42 }
+    ]
+  }, { agentId: "codex-cli" });
+
+  assert.deepEqual(messages, []);
+  assert.equal(calls, 0);
+});
+
+test("relay-owned Telegram outbound skip is not counted as delivery", async () => {
+  const results = await dispatchAdditionalTransports({
+    transports: [
+      { name: "relay", type: "relay", enabled: true, baseUrl: "http://127.0.0.1:9" },
+      { name: "telegram", type: "telegram", enabled: true, botToken: "test-token", chatId: 42 }
+    ]
+  }, {
+    kind: "agent_text",
+    agentId: "codex-cli",
+    agentLabel: "Codex CLI",
+    text: "relay-owned"
+  }, "relay");
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].type, "telegram");
+  assert.equal(results[0].skipped, true);
+  assert.equal(results[0].reason, "relay-owned");
+  assert.equal(results[0].ok, false);
+});
+
+test("targeted text does not wake or queue agents whose mode ignores text", async (t) => {
+  await fs.mkdir(dataDir, { recursive: true });
+  const runtimeStatePath = path.join(
+    dataDir,
+    `runtime-state-text-mode-${process.pid}-${Date.now()}.json`
+  ).replaceAll("\\", "/");
+  t.after(() => removeTempFiles(runtimeStatePath));
+
+  const config = {
+    sessionId: "text-mode-e2e",
+    runtimeStatePath,
+    remote: { defaultMode: "interactive" },
+    codex: {
+      enabled: true,
+      agentId: "codex-cli",
+      mode: "approval-only"
+    },
+    transports: []
+  };
+  const routed = routeInboundMessages(config, { agentId: "legax-daemon" }, [{
+    id: "text-approval-only",
+    type: "text",
+    targetAgentId: "codex-cli",
+    text: "should not queue"
+  }]);
+
+  assert.deepEqual(routed, []);
+  const state = JSON.parse(await fs.readFile(runtimeStatePath, "utf8"));
+  const session = state.sessions["text-mode-e2e"];
+  assert.equal(session?.launchRequests?.["codex-cli"], undefined);
+  assert.equal(session?.agents?.["codex-cli"]?.mode, undefined);
+  assert.deepEqual(session?.agents?.["codex-cli"]?.inbox ?? [], []);
+});
+
+test("targeted text can launch configured Codex desktop mirror adapter", async (t) => {
+  await fs.mkdir(dataDir, { recursive: true });
+  const runtimeStatePath = path.join(
+    dataDir,
+    `runtime-state-desktop-mirror-launch-${process.pid}-${Date.now()}.json`
+  ).replaceAll("\\", "/");
+  t.after(() => removeTempFiles(runtimeStatePath));
+
+  const config = {
+    sessionId: "desktop-mirror-launch-e2e",
+    runtimeStatePath,
+    remote: { defaultMode: "interactive" },
+    codexDesktopMirror: {
+      enabled: true,
+      agentId: "codex-desktop",
+      mode: "interactive"
+    },
+    transports: []
+  };
+  const routed = routeInboundMessages(config, { agentId: "legax-daemon" }, [{
+    id: "text-desktop-mirror",
+    type: "text",
+    targetAgentId: "codex-desktop",
+    text: "why is this read-only?"
+  }]);
+
+  assert.deepEqual(routed, []);
+  const state = JSON.parse(await fs.readFile(runtimeStatePath, "utf8"));
+  const session = state.sessions["desktop-mirror-launch-e2e"];
+  assert.equal(session.launchRequests["codex-desktop"].agentId, "codex-desktop");
+  assert.equal(session.agents["codex-desktop"].inbox[0].text, "why is this read-only?");
 });
 
 test("Telegram /start and inline callbacks route through one poller into agent queues", async (t) => {
@@ -646,7 +770,7 @@ test("Telegram outbound HTML formats returned messages with compact context and 
     text: "Done & ready.\n<tag>",
     metadata: {
       deliveryReason: "turn_completed",
-      projectPath: "F:/workspace/opensource/legax",
+      projectPath: "fixtures/projects/legax",
       threadTitle: "Fix Telegram formatting"
     }
   });
@@ -654,7 +778,7 @@ test("Telegram outbound HTML formats returned messages with compact context and 
   assert.equal(payloads.length, 1);
   assert.equal(payloads[0].parse_mode, "HTML");
   assert.match(payloads[0].text, /^<b>Codex CLI<\/b> <i>Message<\/i>/);
-  assert.match(payloads[0].text, /Dir: <code>F:\/workspace\/opensource\/legax<\/code>/);
+  assert.match(payloads[0].text, /Dir: <code>fixtures\/projects\/legax<\/code>/);
   assert.match(payloads[0].text, /Project: <code>legax<\/code>/);
   assert.match(payloads[0].text, /Session: <code>Fix Telegram formatting<\/code>/);
   assert.match(payloads[0].text, /\n\n<b>Agent response<\/b>\n<blockquote>/);
@@ -699,7 +823,7 @@ test("Telegram important mode keeps session selection replies concise", () => {
     agentLabel: "Gemini CLI",
     text: "Gemini CLI session selected: Alpha build session",
     metadata: {
-      cwd: "F:/workspace/opensource/legax",
+      cwd: "fixtures/projects/legax",
       threadTitle: "Alpha build session",
       telegramReplyMarkup: {
         inline_keyboard: [[{ text: "Session", callback_data: "legax:sessions:gemini-cli" }]]
@@ -710,7 +834,7 @@ test("Telegram important mode keeps session selection replies concise", () => {
   assert.equal(payloads.length, 1);
   assert.equal(payloads[0].parse_mode, "HTML");
   assert.match(payloads[0].text, /^<b>Gemini CLI<\/b> <i>Status<\/i>/);
-  assert.match(payloads[0].text, /Dir: <code>F:\/workspace\/opensource\/legax<\/code>/);
+  assert.match(payloads[0].text, /Dir: <code>fixtures\/projects\/legax<\/code>/);
   assert.match(payloads[0].text, /Session: <code>Alpha build session<\/code>/);
   assert.match(payloads[0].text, /\n\n<b>Selection<\/b>\n<blockquote>Gemini CLI session selected: Alpha build session<\/blockquote>/);
   assert.doesNotMatch(payloads[0].text, /^----------/);
@@ -811,7 +935,7 @@ test("Telegram outbound pins active CLI project session context", async (t) => {
       agentId: "gemini-cli",
       agentLabel: "Gemini CLI",
       projectName: "alpha",
-      cwd: "F:/workspace/alpha",
+      cwd: "fixtures/projects/alpha",
       threadId: "gemini-alpha-1",
       threadTitle: "Alpha build session",
       telegramReplyMarkup: {
@@ -842,7 +966,7 @@ test("Telegram outbound pins active CLI project session context", async (t) => {
     metadata: {
       ...event.metadata,
       projectName: "beta",
-      cwd: "F:/workspace/beta",
+      cwd: "fixtures/projects/beta",
       threadId: "gemini-beta-1",
       threadTitle: "Beta release session"
     }
@@ -1011,7 +1135,7 @@ test("Telegram outbound replaces an existing Legax context when a session is sel
       agentId: "codex-cli",
       agentLabel: "Codex CLI",
       projectName: "legax",
-      cwd: "F:/workspace/legax",
+      cwd: "fixtures/projects/legax",
       threadId: "codex-active-1",
       threadTitle: "Active work",
       telegramReplyMarkup: {
@@ -1085,7 +1209,7 @@ test("Telegram outbound repins active context after the user unpins it", async (
       agentId: "codex-cli",
       agentLabel: "Codex CLI",
       projectName: "legax",
-      cwd: "F:/workspace/legax",
+      cwd: "fixtures/projects/legax",
       threadId: "codex-active-1",
       threadTitle: "Active work",
       telegramReplyMarkup: {

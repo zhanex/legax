@@ -24,7 +24,7 @@ relay:
     enabled: true
     path: ./data/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80                             # 0 to omit message-body previews
+    textPreview: 0                              # keep audit metadata-only by default
 
 mcp:
   enabled: true
@@ -64,7 +64,7 @@ daemon:
   commandPollIntervalMs: 1000
   commandClaimTtlMs: 30000    # max time this daemon may hold a claimed relay command before retry/failure
   projectRoots:               # local folders the Telegram Mini App project picker may browse
-    - F:/workspace
+    - ./workspace              # replace with a local folder you want the picker to browse
   projectRootHiddenNames:
     - .git
     - node_modules

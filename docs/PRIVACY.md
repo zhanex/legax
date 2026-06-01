@@ -29,7 +29,7 @@ The software **does not** transmit data to the project maintainers. There is no 
 
 - Persistent daemon and MCP state is on the operator's local filesystem under `data/` by default (configurable via `runtimeStatePath` and `storagePath`).
 - The development relay stores its `legax.relay/1` store in `./data/relay-store.json` by default; the standalone relay stores it in `/var/lib/legax-relay/relay-store.json` by default. Both can be changed with `relay.storePath`.
-- Relay audit is append-only when enabled. It writes metadata to `relay.audit.path` and may include a configurable short `textPreview`; set `relay.audit.textPreview: 0` to omit previews.
+- Relay audit is append-only when enabled. It writes metadata to `relay.audit.path`; `relay.audit.textPreview` defaults to `0`, and opt-in previews are redacted before writing.
 - Logs are not produced by default beyond what the daemon prints to stderr; if the operator redirects stderr to a file, that file may contain status lines and error stacks (no message bodies by default).
 
 ## Third-Party Transports

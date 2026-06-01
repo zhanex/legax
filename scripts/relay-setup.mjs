@@ -93,13 +93,11 @@ relay:
   publicBaseUrl: ${publicBaseUrl}
   secret: ${secret}
   storePath: ${dataDir}/relay-store.json
-  maxEventsPerSession: 500
-  maxMessagesPerSession: 500
   audit:
     enabled: true
     path: ${dataDir}/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80
+    textPreview: 0
 `;
 
   const caddyfile = `${domain} {

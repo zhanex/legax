@@ -7,6 +7,7 @@ import {
   filterAgentMessages,
   getAgentRuntime,
   normalizeApprovals,
+  shouldForwardRemoteEvent,
   timeoutDecision
 } from "./lib/runtime-state.mjs";
 import { pollInboundTransports } from "./lib/inbound-transports.mjs";
@@ -130,6 +131,10 @@ async function httpJson(url, options = {}, timeoutMs = 15000) {
 
 async function approvalPrompt(args) {
   const config = loadConfig();
+  if (!runtimeCanAcceptApproval(config, config.runtimeMode)
+    || !shouldForwardRemoteEvent(config.runtimeMode, "permission_request")) {
+    return permissionBehaviorResult(config, "deny");
+  }
   const relay = selectRelay(config);
   const requestId = `claude-${crypto.randomUUID()}`;
   const headers = relay?.secret ? { "x-legax-secret": relay.secret } : {};
@@ -176,6 +181,10 @@ async function approvalPrompt(args) {
   }
 
   const decision = await waitForDecision(config, relay, headers, requestId);
+  return permissionBehaviorResult(config, decision);
+}
+
+function permissionBehaviorResult(config, decision) {
   const behavior = decision === "approve"
     ? config.claudeCode.permissionBehaviorOnApprove
     : config.claudeCode.permissionBehaviorOnDeny;
@@ -186,7 +195,7 @@ async function approvalPrompt(args) {
 }
 
 async function waitForDecision(config, relay, headers, requestId) {
-  if (!refreshApprovalMode(config)) return timeoutDecision(config);
+  if (!refreshApprovalMode(config)) return "deny";
   const timeoutMs = Number(config.claudeCode.approvalTimeoutMs ?? config.approvals?.timeoutMs ?? 300000);
   const deadline = Date.now() + timeoutMs;
   let after = 0;
@@ -213,7 +222,7 @@ async function waitForDecision(config, relay, headers, requestId) {
     });
     const messages = filterAgentMessages(config, config.claudeCode, [...rawMessages, ...inboundMessages]);
     config.runtimeMode = applyControlMessages(config, config.claudeCode, messages, config.runtimeMode);
-    if (!refreshApprovalMode(config)) return timeoutDecision(config);
+    if (!refreshApprovalMode(config)) return "deny";
     for (const message of messages) {
       if (message.type === "permission_decision" && message.requestId === requestId) {
         return message.decision === "approve" ? "approve" : "deny";

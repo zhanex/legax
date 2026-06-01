@@ -18,6 +18,11 @@ export function normalizeMode(value) {
   return "interactive";
 }
 
+export function shouldForwardRemoteEvent(mode, _kind, metadata = {}) {
+  if (normalizeMode(mode) !== "paused") return true;
+  return metadata?.allowWhenPaused === true;
+}
+
 export function normalizeApprovals(raw = {}) {
   return {
     enabled: true,

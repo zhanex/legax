@@ -11,7 +11,16 @@ export const LEGAX_EVENT_KINDS = Object.freeze([
   "attention_item"
 ]);
 
-const EVENT_KIND_SET = new Set(LEGAX_EVENT_KINDS);
+export const LEGAX_LEGACY_EVENT_KINDS = Object.freeze([
+  "agent_text",
+  "status",
+  "system",
+  "permission_request",
+  "user_input_request",
+  "completion"
+]);
+
+const EVENT_KIND_SET = new Set([...LEGAX_EVENT_KINDS, ...LEGAX_LEGACY_EVENT_KINDS]);
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function normalizeLegaxEvent(event = {}) {

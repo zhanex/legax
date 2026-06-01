@@ -38,9 +38,9 @@ export const ADAPTERS = [
     defaultAgentId: "codex-cli",
     label: "Codex CLI",
     script: "scripts/codex-app-server-link.mjs",
-    cliBackend: "app-server",
+    cliBackend: "app-server-ws",
     mcpEnabled: true,
-    autoStart: true
+    autoStart: false
   },
   {
     key: "claude",

@@ -14,6 +14,7 @@ import {
   packageRoot,
   resolveConfigRelative
 } from "../../scripts/lib/paths.mjs";
+import { parseSimpleYaml } from "../../scripts/lib/yaml.mjs";
 
 test("installed-mode paths keep package files separate from operator data", async (t) => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "legax-home-"));
@@ -29,6 +30,43 @@ test("installed-mode paths keep package files separate from operator data", asyn
     path.join(home, "data", "runtime-state.json")
   );
   assert.ok(packageRoot.endsWith("legax") || packageRoot.includes("node_modules"));
+});
+
+test("YAML parser preserves nested config objects and lists used by examples", () => {
+  const parsed = parseSimpleYaml(`
+relay:
+  audit:
+    enabled: true
+    path: ./data/relay-audit.jsonl
+    textPreview: 0
+daemon:
+  hostGroups:
+    - default
+  notifications:
+    telegram:
+      messageDetail: important
+transports:
+  - name: telegram
+    type: telegram
+    enabled: false
+    notifications:
+      maxParts: 8
+codex:
+  args:
+    - fixture:fake-codex-app-server.mjs
+    - app-server
+    - --listen
+`);
+
+  assert.deepEqual(parsed.relay.audit, {
+    enabled: true,
+    path: "./data/relay-audit.jsonl",
+    textPreview: 0
+  });
+  assert.deepEqual(parsed.daemon.hostGroups, ["default"]);
+  assert.deepEqual(parsed.daemon.notifications.telegram, { messageDetail: "important" });
+  assert.equal(parsed.transports[0].notifications.maxParts, 8);
+  assert.deepEqual(parsed.codex.args, ["fixture:fake-codex-app-server.mjs", "app-server", "--listen"]);
 });
 
 function runLegax(args, env = {}) {

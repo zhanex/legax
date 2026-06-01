@@ -29,7 +29,7 @@
 | Relay browser | HTTP(S)、paired device cookie | Relay | 浏览器永远不接收 desktop secret。 |
 | Telegram | Bot API polling 或 webhook | 启用 relay transport 时归 relay；direct polling 仅作为 no-relay fallback | Telegram callback data 必须紧凑且包含 target。 |
 | Feishu/Lark | App bot send API 和 event subscription | Relay | 加密 callback 目前需要上游 decrypting gateway。 |
-| Webhook | 操作者拥有的 HTTP endpoint | 仅出站 | 接收方看到配置的 event payload。 |
+| Webhook | 操作者拥有的 HTTP endpoint | 默认仅出站；入站必须显式设置 `inboundEnabled` + `inboundSecret` | 接收方看到配置的 event payload。 |
 
 ## 兼容性变更规则
 

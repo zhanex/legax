@@ -108,7 +108,7 @@ A generation is one execution attempt or branch under a portable relay session:
     "id": "native-cli-session"
   },
   "worktree": {
-    "path": "F:/workspace/project"
+    "path": "PROJECT_PATH"
   },
   "checkpoint": {
     "artifactId": "checkpoint-1"

@@ -16,7 +16,8 @@ import {
   normalizeApprovals,
   setAgentCursor,
   setAgentThreadSelection,
-  setAgentMode
+  setAgentMode,
+  shouldForwardRemoteEvent
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
 import {
@@ -530,6 +531,7 @@ class RelayClient {
       },
       createdAt: new Date().toISOString()
     };
+    if (!shouldForwardRemoteEvent(event.metadata.mode, kind, event.metadata)) return event;
     const results = [];
     if (this.relay) {
       try {
@@ -638,7 +640,8 @@ class ClaudeCodeLink {
       command: settings.command,
       mode: this.mode,
       includeThreadMetadata: false,
-      telegramSuppress: true
+      telegramSuppress: true,
+      allowWhenPaused: true
     });
     this.startPolling();
   }
@@ -764,7 +767,8 @@ class ClaudeCodeLink {
           if (!this.canAcceptText()) {
             await this.relay.send("status", `Phone text ignored because remote mode is ${this.mode}.`, {
               adapter: "claude-code",
-              mode: this.mode
+              mode: this.mode,
+              allowWhenPaused: true
             });
             continue;
           }
@@ -819,7 +823,8 @@ class ClaudeCodeLink {
       await this.relay.send("status", `Claude Code remote mode switched to ${nextMode}.`, {
         adapter: "claude-code",
         mode: nextMode,
-        controlMessageId: message.id
+        controlMessageId: message.id,
+        allowWhenPaused: true
       });
     }
   }

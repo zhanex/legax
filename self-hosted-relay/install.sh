@@ -199,13 +199,11 @@ relay:
   port: $PORT
   secret: $DESKTOP_SECRET
   storePath: $DATA_DIR/relay-store.json
-  maxEventsPerSession: 500
-  maxMessagesPerSession: 500
   audit:
     enabled: true
     path: $DATA_DIR/relay-audit.jsonl
     maxTail: 1000
-    textPreview: 80
+    textPreview: 0
 EOF
     chmod 0600 "$config_file"
   else

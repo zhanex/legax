@@ -19,6 +19,7 @@ import {
   setAgentCursor,
   setAgentThreadSelection,
   setAgentMode,
+  shouldForwardRemoteEvent,
   timeoutDecision
 } from "./lib/runtime-state.mjs";
 import { readYaml } from "./lib/yaml.mjs";
@@ -64,15 +65,17 @@ function loadConfig() {
   const codexRaw = raw.codex ?? {};
   const claudeRaw = raw.claude ?? {};
   const geminiRaw = raw.gemini ?? {};
+  const sharedServerMode = codexRaw.sharedServerMode
+    ?? (codexRaw.autoStartSharedServer === false ? "connect-only" : "connect-or-start");
   const codexAppServer = {
     enabled: true,
     agentId: "codex-cli",
     agentLabel: "Codex CLI",
-    cliBackend: codexRaw.cliBackend ?? "app-server",
+    cliBackend: codexRaw.cliBackend ?? "app-server-ws",
     useExisting: codexRaw.useExisting ?? false,
     appServerUrl: codexRaw.appServerUrl ?? codexRaw.wsUrl ?? "ws://127.0.0.1:18779/rpc",
-    sharedServerMode: codexRaw.sharedServerMode ?? "connect-only",
-    autoStartSharedServer: codexRaw.autoStartSharedServer ?? false,
+    sharedServerMode,
+    autoStartSharedServer: codexRaw.autoStartSharedServer ?? sharedServerMode !== "connect-only",
     stopSharedServerOnExit: codexRaw.stopSharedServerOnExit ?? false,
     mcpEnabled: true,
     mcpRole: "capability",
@@ -164,6 +167,37 @@ function defaultCodexAppServerArgs(settings) {
     return args;
   }
   return ["app-server", "--listen", "stdio://"];
+}
+
+function ensureListenArg(args, listenUrl) {
+  const normalized = args.map(String);
+  for (let index = 0; index < normalized.length; index += 1) {
+    const arg = normalized[index];
+    if (arg.startsWith("--listen=")) return normalized;
+    if (arg === "--listen") {
+      const next = normalized[index + 1];
+      if (next && !next.startsWith("--")) return normalized;
+      normalized.splice(index + 1, 0, listenUrl);
+      return normalized;
+    }
+  }
+  return [...normalized, "--listen", listenUrl];
+}
+
+function effectiveCodexAppServerArgs(settings) {
+  const args = Array.isArray(settings.args)
+    ? settings.args.map(String)
+    : defaultCodexAppServerArgs(settings);
+  return usesWebSocketAppServer(settings)
+    ? ensureListenArg(args, sharedServerListenUrl(settings))
+    : args;
+}
+
+function sharedServerStartArgs(settings) {
+  const args = Array.isArray(settings.sharedServerArgs)
+    ? settings.sharedServerArgs.map(String)
+    : effectiveCodexAppServerArgs(settings);
+  return ensureListenArg(args, sharedServerListenUrl(settings));
 }
 
 function usesExistingAppServer(settings) {
@@ -272,6 +306,7 @@ class RelayClient {
       },
       createdAt: new Date().toISOString()
     };
+    if (!shouldForwardRemoteEvent(event.metadata.mode, kind, event.metadata)) return event;
     const results = [];
     if (this.relay) {
       try {
@@ -594,7 +629,7 @@ class AppServerRpc {
       await this.startWebSocket(settings);
       return;
     }
-    const args = Array.isArray(settings.args) ? settings.args.map(String) : defaultCodexAppServerArgs(settings);
+    const args = effectiveCodexAppServerArgs(settings);
     this.child = spawn(String(settings.command), args, {
       cwd: resolveFromCwd(settings.cwd ?? "."),
       env: process.env,
@@ -621,12 +656,10 @@ class AppServerRpc {
     const ready = await waitForSharedWebSocketServer(settings);
     if (!ready) {
       const mode = settings.sharedServerMode ?? (settings.autoStartSharedServer ? "connect-or-start" : "connect-only");
-      if (settings.autoStartSharedServer === true || mode === "connect-or-start" || mode === "start-owned") {
+      if (mode === "connect-or-start" || mode === "start-owned") {
         const listenUrl = sharedServerListenUrl(settings);
         const command = String(settings.sharedServerCommand ?? settings.command);
-        const args = Array.isArray(settings.sharedServerArgs)
-          ? settings.sharedServerArgs.map(String)
-          : ["app-server", "--listen", listenUrl];
+        const args = sharedServerStartArgs(settings);
         this.sharedServerChild = spawn(command, args, {
           cwd: resolveFromCwd(settings.cwd ?? "."),
           env: process.env,
@@ -831,7 +864,8 @@ class CodexAppServerLink {
         adapter: "codex-app-server",
         threadId: this.threadId,
         mode: this.mode,
-        telegramSuppress: true
+        telegramSuppress: true,
+        allowWhenPaused: true
       });
     }
     if (this.config.codexAppServer.listThreadsOnStartup === true) {
@@ -866,7 +900,8 @@ class CodexAppServerLink {
         await this.relay.send("status", `Phone approval ignored because remote mode is ${this.mode}.`, {
           adapter: "codex-app-server",
           mode: this.mode,
-          requestId: message.requestId
+          requestId: message.requestId,
+          allowWhenPaused: true
         });
         return;
       }
@@ -894,7 +929,8 @@ class CodexAppServerLink {
         adapter: "codex-app-server",
         mode: this.mode,
         requestId: message.requestId,
-        orphanDecision: message.decision
+        orphanDecision: message.decision,
+        allowWhenPaused: true
       });
       return;
     }
@@ -904,7 +940,8 @@ class CodexAppServerLink {
         await this.relay.send("status", `Phone input ignored because remote mode is ${this.mode}.`, {
           adapter: "codex-app-server",
           mode: this.mode,
-          requestId: message.requestId
+          requestId: message.requestId,
+          allowWhenPaused: true
         });
         return;
       }
@@ -918,7 +955,8 @@ class CodexAppServerLink {
       await this.relay.send("status", `Phone input ignored: no pending input matches requestId ${message.requestId} (the adapter may have restarted since the request was sent).`, {
         adapter: "codex-app-server",
         mode: this.mode,
-        requestId: message.requestId
+        requestId: message.requestId,
+        allowWhenPaused: true
       });
       return;
     }
@@ -938,7 +976,8 @@ class CodexAppServerLink {
     if (!this.canAcceptText()) {
       await this.relay.send("status", `Phone text ignored because remote mode is ${this.mode}.`, {
         adapter: "codex-app-server",
-        mode: this.mode
+        mode: this.mode,
+        allowWhenPaused: true
       });
       return;
     }
@@ -981,7 +1020,8 @@ class CodexAppServerLink {
       await this.relay.send("status", `Codex CLI remote mode switched to ${nextMode}.`, {
         adapter: "codex-app-server",
         mode: nextMode,
-        controlMessageId: message.id
+        controlMessageId: message.id,
+        allowWhenPaused: true
       });
     }
   }
@@ -1360,6 +1400,9 @@ class CodexAppServerLink {
     }
 
     if (method === "mcpServer/elicitation/request") {
+      if (!this.canAcceptApproval()) {
+        return { action: "decline", content: null };
+      }
       await this.relay.send("permission_request", formatElicitationRequest(params), {
         requestId: `codex-${nativeRequestId}`,
         adapter: "codex-app-server",
@@ -1377,6 +1420,7 @@ class CodexAppServerLink {
   }
 
   async handleUserInputRequest(method, params, nativeRequestId) {
+    if (!this.canAcceptApproval()) return { answers: {} };
     const requestId = `codex-${nativeRequestId}`;
     await this.relay.send("user_input_request", formatUserInputRequest(params, requestId), {
       requestId,
@@ -1393,6 +1437,12 @@ class CodexAppServerLink {
   }
 
   async handleApprovalRequest(method, params, nativeRequestId) {
+    if (!this.canAcceptApproval()) {
+      if (method === "item/permissions/requestApproval") {
+        return { scope: "turn", permissions: {} };
+      }
+      return { decision: "decline" };
+    }
     const requestId = `codex-${nativeRequestId}`;
     await this.relay.send("permission_request", formatApprovalRequest(method, params), {
       requestId,
@@ -1789,9 +1839,7 @@ async function main() {
         sharedServerMode: usesWebSocketAppServer(config.codexAppServer) ? config.codexAppServer.sharedServerMode : undefined,
         autoStartSharedServer: usesWebSocketAppServer(config.codexAppServer) ? config.codexAppServer.autoStartSharedServer : undefined,
         command: config.codexAppServer.command,
-        args: Array.isArray(config.codexAppServer.args)
-          ? config.codexAppServer.args
-          : defaultCodexAppServerArgs(config.codexAppServer),
+        args: effectiveCodexAppServerArgs(config.codexAppServer),
         cwd: resolveFromCwd(config.codexAppServer.cwd ?? "."),
         threadCwd: resolveFromCwd(config.codexAppServer.threadCwd ?? ".")
       }

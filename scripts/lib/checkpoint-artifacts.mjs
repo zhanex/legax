@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 export const CHECKPOINT_BUNDLE_SCHEMA = "legax.checkpoint/1";
+const LEGACY_CHECKPOINT_BUNDLE_SCHEMAS = new Set(["legax.artifact/1"]);
 export const CHECKPOINT_ARTIFACT_TYPE = "checkpoint.bundle";
 
 const TEXT_SAMPLE_BYTES = 8192;
@@ -276,9 +277,8 @@ export function encryptCheckpointBundle(bundle, { artifactId = `artifact_${crypt
   }
   const dataKey = crypto.randomBytes(32);
   const metadata = {
-    schema: "legax.artifact/1",
+    schema: CHECKPOINT_BUNDLE_SCHEMA,
     type: CHECKPOINT_ARTIFACT_TYPE,
-    checkpointSchema: bundle.schema,
     sessionId: String(bundle.sessionId ?? ""),
     generationId: String(bundle.generationId ?? ""),
     fileCount: Array.isArray(bundle.files) ? bundle.files.length : 0,
@@ -414,9 +414,13 @@ function readExistingRestoreFile(absolutePath, normalized) {
   }
 }
 
+function isSupportedCheckpointBundleSchema(schema) {
+  return schema === CHECKPOINT_BUNDLE_SCHEMA || LEGACY_CHECKPOINT_BUNDLE_SCHEMAS.has(schema);
+}
+
 export function restoreCheckpointBundle(bundle, { targetDir, allowOverwrite = false } = {}) {
   if (!targetDir) throw new Error("targetDir is required");
-  if (bundle?.schema !== CHECKPOINT_BUNDLE_SCHEMA) throw new Error("unsupported checkpoint bundle schema");
+  if (!isSupportedCheckpointBundleSchema(bundle?.schema)) throw new Error("unsupported checkpoint bundle schema");
   const targetRoot = ensureRestoreTarget(targetDir);
   const written = [];
   const conflicts = [];
