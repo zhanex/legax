@@ -1,6 +1,6 @@
 {
   "name": "@legax/daemon",
-  "version": "0.0.3",
+  "version": "0.0.4-beta.1",
   "type": "module",
   "description": "Legax daemon package for running local agent bridges.",
   "license": "MIT",
