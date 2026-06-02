@@ -68,6 +68,8 @@ test("npm publish workflow supports manual beta publishes only", async () => {
 
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /version:/);
+  assert.match(workflow, /LEGAX_RELEASE_VERSION:\s*\$\{\{\s*inputs\.version\s*\}\}/);
+  assert.doesNotMatch(workflow, /VERSION="\$\{\{\s*inputs\.version\s*\}\}"/);
   assert.match(workflow, /Manual npm publishing is limited to prerelease versions/);
   assert.match(workflow, /Package versions must all equal/);
   assert.match(workflow, /already published; skipping this immutable package/);

@@ -34,9 +34,11 @@ jobs:
       - name: Validate manual beta publish
         if: github.event_name == 'workflow_dispatch'
         shell: bash
+        env:
+          LEGAX_RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ inputs.version }}"
+          VERSION="${LEGAX_RELEASE_VERSION}"
           node - "$VERSION" <<'JS'
           const fs = require("node:fs");
           const expected = process.argv[2];
