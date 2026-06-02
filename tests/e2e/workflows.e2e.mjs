@@ -62,6 +62,25 @@ test("npm publish workflow uses public provenance publishes for every workspace"
   assert.match(workflow, /npm publish --workspace legax --access public --provenance/);
 });
 
+test("npm publish workflow supports manual beta publishes only", async () => {
+  const workflowPath = path.join(pluginRoot, ".github", "workflows", "publish-npm.yml");
+  const workflow = await fs.readFile(workflowPath, "utf8");
+
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /version:/);
+  assert.match(workflow, /LEGAX_RELEASE_VERSION:\s*\$\{\{\s*inputs\.version\s*\}\}/);
+  assert.doesNotMatch(workflow, /VERSION="\$\{\{\s*inputs\.version\s*\}\}"/);
+  assert.match(workflow, /Manual npm publishing is limited to prerelease versions/);
+  assert.match(workflow, /Package versions must all equal/);
+  assert.match(workflow, /already published; skipping this immutable package/);
+  assert.match(workflow, /LEGAX_RELAY_ALREADY_PUBLISHED=true/);
+  assert.match(workflow, /env\.LEGAX_RELAY_ALREADY_PUBLISHED != 'true'/);
+  assert.match(workflow, /npm publish --workspace @legax\/relay --access public --provenance --tag beta/);
+  assert.match(workflow, /npm publish --workspace @legax\/daemon --access public --provenance --tag beta/);
+  assert.match(workflow, /npm publish --workspace legax --access public --provenance --tag beta/);
+  assert.doesNotMatch(workflow, /--tag latest/);
+});
+
 test("CodeQL workflow runs security-and-quality queries for JavaScript and Actions", async () => {
   const workflowPath = path.join(pluginRoot, ".github", "workflows", "codeql.yml");
   const workflow = await fs.readFile(workflowPath, "utf8");

@@ -3,6 +3,12 @@ name: Publish npm package
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Prerelease version already committed in package manifests, for example X.Y.Z-beta.N"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,16 +31,74 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Validate manual beta publish
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          LEGAX_RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${LEGAX_RELEASE_VERSION}"
+          node - "$VERSION" <<'JS'
+          const fs = require("node:fs");
+          const expected = process.argv[2];
+          if (!/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(expected)) {
+            console.error("Manual npm publishing is limited to prerelease versions such as X.Y.Z-beta.N.");
+            process.exit(1);
+          }
+
+          const files = [
+            "package.json",
+            "packages/cli/package.json",
+            "packages/daemon/package.json",
+            "packages/relay/package.json"
+          ];
+          const mismatches = files.flatMap((file) => {
+            const actual = JSON.parse(fs.readFileSync(file, "utf8")).version;
+            return actual === expected ? [] : [`${file}: ${actual}`];
+          });
+          if (mismatches.length > 0) {
+            console.error(`Package versions must all equal ${expected}:\n${mismatches.join("\n")}`);
+            process.exit(1);
+          }
+          JS
+
+          for package in "@legax/relay" "@legax/daemon" "legax"; do
+            if npm view "${package}@${VERSION}" version >/dev/null 2>&1; then
+              echo "::notice::${package}@${VERSION} is already published; skipping this immutable package."
+              case "${package}" in
+                "@legax/relay") echo "LEGAX_RELAY_ALREADY_PUBLISHED=true" >> "$GITHUB_ENV" ;;
+                "@legax/daemon") echo "LEGAX_DAEMON_ALREADY_PUBLISHED=true" >> "$GITHUB_ENV" ;;
+                "legax") echo "LEGAX_CLI_ALREADY_PUBLISHED=true" >> "$GITHUB_ENV" ;;
+              esac
+            fi
+          done
+
       - name: Run CI gate
         env:
           LEGAX_SECRET: ci-placeholder-secret
         run: npm run ci
 
       - name: Publish relay
+        if: github.event_name == 'release'
         run: npm publish --workspace @legax/relay --access public --provenance
 
       - name: Publish daemon
+        if: github.event_name == 'release'
         run: npm publish --workspace @legax/daemon --access public --provenance
 
       - name: Publish CLI
+        if: github.event_name == 'release'
         run: npm publish --workspace legax --access public --provenance
+
+      - name: Publish beta relay
+        if: github.event_name == 'workflow_dispatch' && env.LEGAX_RELAY_ALREADY_PUBLISHED != 'true'
+        run: npm publish --workspace @legax/relay --access public --provenance --tag beta
+
+      - name: Publish beta daemon
+        if: github.event_name == 'workflow_dispatch' && env.LEGAX_DAEMON_ALREADY_PUBLISHED != 'true'
+        run: npm publish --workspace @legax/daemon --access public --provenance --tag beta
+
+      - name: Publish beta CLI
+        if: github.event_name == 'workflow_dispatch' && env.LEGAX_CLI_ALREADY_PUBLISHED != 'true'
+        run: npm publish --workspace legax --access public --provenance --tag beta

@@ -1,6 +1,6 @@
 {
   "name": "legax",
-  "version": "0.0.3",
+  "version": "0.0.4-beta.1",
   "type": "module",
   "description": "Legax CLI - agent-neutral remote interaction layer for phone replies and approval requests.",
   "license": "MIT",

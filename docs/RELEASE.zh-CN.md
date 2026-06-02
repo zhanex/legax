@@ -55,12 +55,15 @@
 
 4. 创建 GitHub Release 后，发布 workflow 会依次发布 `@legax/relay`、`@legax/daemon` 和 `legax`，并通过 OIDC trusted publishing 发布到 npm，不需要配置 `NPM_TOKEN` secret。
 
-5. 如果 release workflow 在 `npm publish` 阶段返回 `E404`，应按失败步骤中的包名排查 npm 授权或 trusted publisher 配置。重新运行失败 workflow 前，检查 package 写入权限、该 package 的 trusted publisher，以及 workflow 文件名是否完全匹配。
+5. 测试版 package 通过 **Actions -> Publish npm package -> Run workflow** 发布。选择已经包含 prerelease 版本号 bump 的分支，输入 package manifest 中相同的 prerelease 版本号，然后运行。手动路径会验证所有 package manifest 是否与输入版本一致，拒绝非 prerelease 版本，运行 CI，然后用 npm `beta` dist-tag 依次发布 `@legax/relay`、`@legax/daemon` 和 `legax`。如果重试时发现某个 package 版本已由之前的部分运行发布，它会跳过这个不可变版本并继续发布剩余 package。不要用手动 workflow 发布 `latest`。
 
-6. 从公开 registry 验证安装：
+6. 如果 release workflow 在 `npm publish` 阶段返回 `E404`，应按失败步骤中的包名排查 npm 授权或 trusted publisher 配置。重新运行失败 workflow 前，检查 package 写入权限、该 package 的 trusted publisher，以及 workflow 文件名是否完全匹配。
+
+7. 从公开 registry 验证安装：
 
    ```bash
    npm install -g legax
+   npm install -g legax@beta
    npm install -g @legax/relay
    legax --version
    legax doctor --offline

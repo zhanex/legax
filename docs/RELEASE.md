@@ -55,12 +55,15 @@ This repository is source-first. Public releases should be cut only after the re
 
 4. Publish by creating a GitHub Release. The release workflow publishes `@legax/relay`, `@legax/daemon`, and `legax` in that order through OIDC trusted publishing and does not require an `NPM_TOKEN` secret.
 
-5. If the release workflow fails with `E404` on `npm publish`, treat it as an npm authorization or trusted-publisher mismatch for the package named in the failing step. Recheck package write access, the package-specific trusted publisher, and the exact workflow filename before rerunning the failed workflow.
+5. Publish beta test packages from **Actions -> Publish npm package -> Run workflow**. Select the branch that already contains the prerelease version bump, enter the same prerelease version from the package manifests, and run it. The manual path validates that all package manifests match the input version, rejects non-prerelease versions, runs CI, then publishes `@legax/relay`, `@legax/daemon`, and `legax` with the `beta` npm dist-tag. If a retry sees a package version that was already published by an earlier partial run, it skips that immutable package and continues with the remaining packages. Do not use the manual workflow for `latest`.
 
-6. Verify install from the public registry:
+6. If the release workflow fails with `E404` on `npm publish`, treat it as an npm authorization or trusted-publisher mismatch for the package named in the failing step. Recheck package write access, the package-specific trusted publisher, and the exact workflow filename before rerunning the failed workflow.
+
+7. Verify install from the public registry:
 
    ```bash
    npm install -g legax
+   npm install -g legax@beta
    npm install -g @legax/relay
    legax --version
    legax doctor --offline
