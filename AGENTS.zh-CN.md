@@ -21,6 +21,7 @@
 
 - 任务路由和 canonical owner 以 [docs/context_for_llms.zh-CN.md](docs/context_for_llms.zh-CN.md) 为准。
 - 默认读取英文文档；只有翻译、中文文档修改或双语一致性检查时才读取 `.zh-CN` 配对。
+- 英文文档是 canonical contract；中文文档是本地化镜像。两者分歧时以英文为准，并同步更新两边。
 - 非平凡代码变更按 `docs/context_for_llms.zh-CN.md` 选择最小任务上下文，再用 `docs/CHANGE_MATRIX.zh-CN.md` 选择聚焦验证。
 - 如果其他文档与本文冲突，先停止并报告冲突。
 

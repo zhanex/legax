@@ -18,6 +18,8 @@ Thanks for considering a contribution. This project is small, opinionated, and d
 
 3. If your change is documentation only, `npm run check:docs` is enough locally, but PRs still need the full CI gate before merge.
 
+4. For agent-assisted work, load only the smallest task-relevant documentation set. Do not load both English and zh-CN document pairs unless the PR is translation parity or divergence review work.
+
 ## Documentation Pairing (Hard Rule)
 
 Every prose `.md` and every `config.example*.yaml` file ships as **a language pair**: `*.md` (English) and `*.zh-CN.md` (Simplified Chinese), or `config.example*.yaml` and matching `config.example*.zh-CN.yaml`. The `check:docs` script enforces this and will fail your PR if a pair is incomplete.
@@ -27,6 +29,7 @@ If you cannot write Chinese, mark the PR title with `[needs-zh]` and either ask 
 Other rules:
 
 - All documentation files are UTF-8 **without BOM**.
+- English documentation is the canonical contract. Simplified Chinese files are localized mirrors; if the two diverge, update the English contract first and then mirror it.
 - Do not put real Telegram bot tokens, OpenAI-style `sk-...` keys, GitHub PATs, AWS keys, or relay secrets in any tracked file. Use placeholders such as `replace-with-a-long-random-secret`, `YOUR_RELAY_HOST`, `TELEGRAM_BOT_TOKEN`. The doc gate scans for these patterns.
 
 ## Code Style

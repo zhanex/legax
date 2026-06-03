@@ -9,7 +9,7 @@ Compact map for coding agents: smallest useful context first, canonical owner fo
 - Default: read `AGENTS.md`, this file, and at most one task row.
 - Prefer `Agent Summary`; read full docs only when editing that contract or resolving ambiguity.
 - Default to English docs. Load Chinese pairs only for translation, Chinese docs, or pair checks.
-- Do not load whole routing tables. Cross-area changes use the smallest useful union.
+- Do not bulk-read `docs/` or load whole routing tables. Cross-area changes use the smallest useful union.
 
 ## Non-Negotiable Rules
 

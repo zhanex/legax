@@ -92,6 +92,9 @@ When adding an exception, document why an external renderer, package format, or 
 - English documentation uses `*.md`.
 - Simplified Chinese documentation uses `*.zh-CN.md`.
 - Root and special files follow the same pairing rule, for example `README.md` and `README.zh-CN.md`, `AGENTS.md` and `AGENTS.zh-CN.md`, `SKILL.md` and `SKILL.zh-CN.md`, and every `config.example*.yaml` file with its matching `config.example*.zh-CN.yaml`.
+- English documentation is the canonical contract. Simplified Chinese documentation is a localized mirror for readers who prefer Chinese.
+- Do not add rules, config fields, behavior, or compatibility promises to a Chinese mirror unless the English canonical file contains the same contract.
+- Coding agents must load only one language for ordinary work. Load both language pairs only for translation, pair consistency, or divergence review.
 - Do not mix English and Chinese prose in the same document except for short language links, product names, CLI commands, API names, config keys, and code examples.
 - When changing a document, update its language pair in the same change whenever the content applies to both audiences.
 
@@ -123,6 +126,7 @@ When adding an exception, document why an external renderer, package format, or 
 - The document follows the title, language-switch, heading, and fenced-code rules, or matches a documented format exception.
 - The English and Simplified Chinese files both exist.
 - The two files describe the same behavior and use the same config keys.
+- English files remain canonical; Chinese mirrors do not introduce extra requirements.
 - English files do not contain Chinese prose.
 - Chinese files do not contain untranslated English paragraphs.
 - Links between language versions work.

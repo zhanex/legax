@@ -21,6 +21,7 @@ This is the repository instruction contract for AI coding agents working on Lega
 
 - Read [docs/context_for_llms.md](docs/context_for_llms.md) for the task routing table and canonical owners.
 - Default to English docs. Load `.zh-CN` pairs only for translation, Chinese documentation work, or pair consistency checks.
+- English docs are the canonical contract. Chinese docs are localized mirrors; if they diverge, follow English and update both.
 - For non-trivial code changes, use the smallest task-specific context set from `docs/context_for_llms.md`, then use `docs/CHANGE_MATRIX.md` for focused verification.
 - If docs conflict with this file, stop and surface the conflict before editing.
 

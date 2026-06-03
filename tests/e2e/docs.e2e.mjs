@@ -66,6 +66,17 @@ test("documentation gate rejects machine-specific workspace paths", async (t) =>
   assert.match(result.stderr, /machine-specific local path/);
 });
 
+test("documentation gate rejects Chinese mojibake from codepage rewrites", async (t) => {
+  const { root } = await createDocsCheckRoot(t, "mojibake");
+  const mojibake = "\u7ba1\u20ac\u6d63\u64b2\u4e2d\u93c2\u56e8\u6a7b\u6587\u5997\uff43\u20ac?";
+  await fs.writeFile(path.join(root, "docs", "mojibake-fixture.md"), "# Mojibake Fixture\n\nEnglish content.\n", "utf8");
+  await fs.writeFile(path.join(root, "docs", "mojibake-fixture.zh-CN.md"), `# \u4e71\u7801\u5939\u5177\n\n${mojibake}\n`, "utf8");
+
+  const result = runDocsCheck(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /contains mojibake or replacement characters/);
+});
+
 test("documentation gate ignores gitignored process notes", async () => {
   const ignoredDir = path.join(pluginRoot, "docs", "superpowers", "check-docs-fixture");
   const ignoredPath = path.join(ignoredDir, "temporary-plan.md");
