@@ -18,6 +18,8 @@
 
 3. 仅改文档时，本地跑 `npm run check:docs` 即可；但 PR 合并前仍需要通过完整 CI 闸门。
 
+4. 使用 agent 辅助工作时，只加载与任务相关的最小文档集合。除非 PR 是翻译一致性或分歧审查工作，否则不要同时加载英文和 zh-CN 文档配对。
+
 ## 文档成对（硬性规则）
 
 所有 `.md` 散文文档与每个 `config.example*.yaml` 文件必须成**语言对**：`*.md`（英文）与 `*.zh-CN.md`（简体中文），或 `config.example*.yaml` 与匹配的 `config.example*.zh-CN.yaml`。`check:docs` 强制此规则，缺一份就让 PR 红。
@@ -27,6 +29,7 @@
 其它规则：
 
 - 所有文档文件 UTF-8 **不带 BOM**。
+- 英文文档是 canonical contract。简体中文文件是本地化镜像；如果两者分歧，先更新英文契约，再同步镜像。
 - 任何已跟踪文件中不得出现真实的 Telegram bot token、OpenAI 风格 `sk-...` 密钥、GitHub PAT、AWS 凭据、relay 密钥。使用占位符如 `replace-with-a-long-random-secret`、`YOUR_RELAY_HOST`、`TELEGRAM_BOT_TOKEN`。文档闸门会扫这些 pattern。
 
 ## 代码风格
