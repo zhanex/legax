@@ -2,20 +2,20 @@
 
 English | [Simplified Chinese](README.zh-CN.md)
 
-Use this index to choose the shortest document for the job. The root README stays focused on project orientation and quick start; deeper material lives here.
+Use this index to find stable project documentation. Agent context routing lives in [Context For LLMs](context_for_llms.md); verification routing lives in [Change Matrix](CHANGE_MATRIX.md).
 
 ## How To Use This Tree
 
-- Coding agents start with `AGENTS.md`, then use [Context For LLMs](context_for_llms.md) to choose the smallest task-specific context set.
+- Coding agents start with `AGENTS.md`, then use [Context For LLMs](context_for_llms.md).
 - Human contributors use this index by work area. Do not read every design document for a small change.
 - Architecture and contract documents are binding for their areas even when a task only loads a subset into context.
 - When a change crosses areas, load the union of the relevant branch documents.
 
 ```text
 docs/
-  README.md                  documentation tree and routing
+  README.md                  documentation tree
   context_for_llms.md        compact agent map
-  CHANGE_MATRIX.md           changed paths to docs and focused tests
+  CHANGE_MATRIX.md           changed paths to focused tests
   ARCHITECTURE.md            global ownership model
   ENGINEERING_GUIDE.md       naming, constants, ownership, patterns
   CONFIGURATION.md           config and YAML parser contract
@@ -46,7 +46,7 @@ docs/
 | [Architecture](ARCHITECTURE.md) | Control, capability, communication, relay-owned Telegram/Feishu routing, daemon, runtime-state, and adapter design. |
 | [Functional Boundaries](FUNCTIONAL_BOUNDARIES.md) | What Legax owns, what it intentionally does not own, and non-goals. |
 | [Engineering Guide](ENGINEERING_GUIDE.md) | Naming, constants, directory ownership, design patterns, anti-patterns, error handling, and testing rules. |
-| [Change Matrix](CHANGE_MATRIX.md) | Changed path to required docs and focused verification commands for coding agents. |
+| [Change Matrix](CHANGE_MATRIX.md) | Changed paths to focused verification commands for coding agents and maintainers. |
 | [Configuration Contract](CONFIGURATION.md) | YAML subset, config sections, path rules, transport fields, and adapter field classes. |
 | [Relay API](RELAY_API.md) | Relay HTTP endpoints, auth classes, status codes, and retry/stale-token behavior. |
 | [Relay Store](RELAY_STORE.md) | `legax.relay/1` sessions, generations, leases, handoffs, artifacts, hosts, commands, inbox, and workflow records. |

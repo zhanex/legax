@@ -2,6 +2,10 @@
 
 [English](ENGINEERING_GUIDE.md) | 简体中文
 
+## Agent Summary
+
+本文是日常工程规则的事实源，包括命名、常量、目录所有权、共享代码边界、设计模式、反模式、错误处理和测试期望。非平凡代码变更前先读本文。本文不替代架构或协议契约；修改行为时仍需读取对应 owner 文档。
+
 本规范面向 Legax 贡献者，定义日常工程维护规则。它补充[架构](ARCHITECTURE.zh-CN.md)、[Adapter 一致性要求](ADAPTER_CONFORMANCE.zh-CN.md)和[扩展 Legax](EXTENDING.zh-CN.md)，把架构约束落到命名、目录、设计模式和审查规则上。
 
 ## 范围

@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](STATE_MACHINES.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for state transitions: adapter runtime modes, daemon and adapter lifecycle, approvals, leases, handoffs, commands, workflows, and session selection. Read it before changing transition rules or terminal states. It complements storage and endpoint contracts but does not own their field-level schemas.
+
 This document centralizes Legax state transitions that are otherwise spread across architecture, relay store, daemon, and adapter code.
 
 ## Adapter Runtime Modes

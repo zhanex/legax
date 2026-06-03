@@ -2,6 +2,13 @@
 
 English | [Simplified Chinese](CONFIGURATION.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for config keys, YAML parser limits, config path resolution, example config structure, and compatibility rules for adding fields. Read it before changing `config.example*.yaml`, `scripts/lib/yaml.mjs`, install defaults, or adapter config shape. It does not own runtime behavior beyond config interpretation.
+
+Legax uses one operator-owned YAML config file. The examples are user-facing templates, but this document is the maintainer contract for adding, parsing, and documenting config fields.
+
+
 Legax uses one operator-owned YAML config file. The examples are user-facing templates, but this document is the maintainer contract for adding, parsing, and documenting config fields.
 
 ## Sources

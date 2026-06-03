@@ -2,20 +2,20 @@
 
 [English](README.md) | 简体中文
 
-用这个索引选择最短的相关文档。根目录 README 只保留项目定位和快速开始；更深入的材料放在这里。
+用这个索引查找稳定项目文档。Agent 上下文路由归 [LLM 上下文](context_for_llms.zh-CN.md)；验证路由归 [变更矩阵](CHANGE_MATRIX.zh-CN.md)。
 
 ## 如何使用这棵树
 
-- 编码 Agent 从 `AGENTS.md` 开始，再通过 [LLM 上下文](context_for_llms.zh-CN.md) 选择最小的任务相关上下文集合。
+- 编码 Agent 从 `AGENTS.md` 开始，再使用 [LLM 上下文](context_for_llms.zh-CN.md)。
 - 人类贡献者按工作范围使用本索引。小改动不需要阅读所有设计文档。
 - 架构和契约文档在各自领域内是必须遵守的规范，即使某个任务只把其中一部分加载进上下文。
 - 如果一个变更跨越多个领域，加载相关分支文档的并集。
 
 ```text
 docs/
-  README.zh-CN.md            文档树和路由
+  README.zh-CN.md            文档树
   context_for_llms.zh-CN.md  Agent 精简地图
-  CHANGE_MATRIX.zh-CN.md     变更路径到文档与聚焦测试
+  CHANGE_MATRIX.zh-CN.md     变更路径到聚焦测试
   ARCHITECTURE.zh-CN.md      全局职责模型
   ENGINEERING_GUIDE.zh-CN.md 命名、常量、职责和模式
   CONFIGURATION.zh-CN.md     配置与 YAML parser 契约
@@ -46,7 +46,7 @@ docs/
 | [架构](ARCHITECTURE.zh-CN.md) | 控制面、能力面、通信面、relay 接管的 Telegram/飞书路由、daemon、运行时状态和适配器设计。 |
 | [功能边界](FUNCTIONAL_BOUNDARIES.zh-CN.md) | Legax 负责什么、刻意不负责什么，以及非目标。 |
 | [工程规范](ENGINEERING_GUIDE.zh-CN.md) | 命名、常量、目录职责、设计模式、禁止模式、错误处理和测试规则。 |
-| [变更矩阵](CHANGE_MATRIX.zh-CN.md) | 面向编码 Agent，把变更路径映射到必读文档和聚焦验证命令。 |
+| [变更矩阵](CHANGE_MATRIX.zh-CN.md) | 面向编码 Agent 和维护者，把变更路径映射到聚焦验证命令。 |
 | [配置契约](CONFIGURATION.zh-CN.md) | YAML 子集、配置段落、路径规则、transport 字段和 adapter 字段类别。 |
 | [Relay API](RELAY_API.zh-CN.md) | Relay HTTP 端点、鉴权类别、状态码，以及 retry/stale-token 行为。 |
 | [Relay Store](RELAY_STORE.zh-CN.md) | `legax.relay/1` 中的会话、generation、lease、handoff、artifact、主机、命令、收件箱和工作流记录。 |

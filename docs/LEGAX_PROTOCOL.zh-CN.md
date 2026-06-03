@@ -2,6 +2,10 @@
 
 [English](LEGAX_PROTOCOL.md) | 简体中文
 
+## Agent Summary
+
+本文是跨 adapter portable protocol shape 的事实源，包括 event envelope、pairing offer、portable session、checkpoint artifact、workflow action contract 和共享语义字段。修改 adapter、daemon、relay 与 transport 共享的 event kind 或字段前先读本文。Endpoint 机制归 `RELAY_API.md`，持久存储归 `RELAY_STORE.md`。
+
 Legax 协议是适配器、daemon、relay、Telegram 以及后续第三方集成之间使用的轻量事件契约。它刻意比任何单个 CLI 的原生协议更窄，只保留跨工具需要共享的语义。
 
 ## 事件信封

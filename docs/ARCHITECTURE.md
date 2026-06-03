@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](ARCHITECTURE.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for Legax's control, capability, and communication planes. Read it before changing process lifecycle, daemon ownership, adapter supervision, MCP boundaries, or transport routing. It does not own endpoint schemas, persisted relay records, or config fields; use `RELAY_API.md`, `RELAY_STORE.md`, and `CONFIGURATION.md` for those contracts.
+
 Legax is a session-management and workflow orchestration layer for agent CLIs. The project uses a generic event model so supported agent CLIs and future adapters can share the same routing, approval, notification, relay-store, and workflow infrastructure.
 
 ## Design Goals

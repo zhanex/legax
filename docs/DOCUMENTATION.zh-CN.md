@@ -9,6 +9,7 @@
 - 根目录 README 只聚焦项目做什么、为什么有用、如何开始、在哪里获得帮助，以及谁维护它。
 - 较长的安装、架构、适配器、插件和维护者材料放到 `docs/` 下的聚焦文档中。
 - 保持 `docs/README.md` 作为文档索引，让 GitHub 读者不必扫描整棵目录树。
+- 保持 `docs/context_for_llms.md` 作为唯一 agent 路由图。`AGENTS.md` 只做紧凑规则入口，`docs/CHANGE_MATRIX.md` 只负责验证选择。
 - 将 community health 文件放在 `.github/`：贡献指南、行为准则、安全策略、支持说明、issue 表单和 PR 模板。
 - 仓库内部文件使用相对链接，保证在 clone、branch 和 fork 中都能工作。
 
@@ -37,6 +38,7 @@
 | --- | --- |
 | 项目概览、快速开始、支持方式和维护者身份 | 根目录 `README.zh-CN.md` |
 | 文档导航 | `docs/README.zh-CN.md` |
+| Agent 上下文路由 | `docs/context_for_llms.zh-CN.md` |
 | 用户安装和日常操作 | `docs/USER_MANUAL.zh-CN.md` 或具体集成的用户文档 |
 | 架构边界、职责归属和生命周期 | `docs/ARCHITECTURE.zh-CN.md`、`docs/FUNCTIONAL_BOUNDARIES.zh-CN.md` 或 ADR |
 | 稳定协议、API、配置、状态或 adapter 契约 | `docs/` 下匹配的契约文档 |
@@ -66,6 +68,7 @@
 
 - 使用一个与文档用途匹配的 `#` 一级标题。
 - 语言切换链接放在标题下方。
+- Agent 工作流常加载的长契约文档，应在语言切换后放置简短的 `## Agent Summary`。
 - 使用简短、面向任务的章节标题。
 - 映射和矩阵使用表格；短规则使用项目符号；只有有顺序要求的过程才使用编号列表。
 - 命令、配置、JSON、YAML 和 shell 片段使用带语言标记的 fenced code block。
@@ -96,8 +99,10 @@
 
 - 所有文档和带注释的示例文件必须使用 UTF-8 且不带 BOM。
 - 避免使用会把 UTF-8 静默改写为本地代码页的编辑器或 shell 命令。
+- 不要用 Windows PowerShell 5.1 的 `Set-Content` 或 `Out-File` 重写被跟踪文档，除非命令明确写入不带 BOM 的 UTF-8。
 - 在 Windows PowerShell 5.1 中重写文件时，优先使用 Node.js、现代编辑器，或 `.NET` 的 `UTF8Encoding(false)`。
 - 提交文档变更前运行 `npm run check:docs`。
+- `npm run check:docs` 包含上下文预算 gate，用于检查紧凑 agent 入口文档和 `Agent Summary` 覆盖。
 
 ## 版本引用
 
@@ -113,6 +118,7 @@
 ## 审查清单
 
 - 内容属于当前文档的规范归属；否则应链接到归属文档，而不是重复内容。
+- Agent 路由属于 `docs/context_for_llms.md`；验证路由属于 `docs/CHANGE_MATRIX.md`。
 - 文档描述的是已发布行为、已接受设计或明确的 roadmap 意图，而不是过程记录。
 - 文档遵循标题、语言切换、章节和 fenced code block 规则，或符合已记录的格式例外。
 - 英文和简体中文文件都存在。
