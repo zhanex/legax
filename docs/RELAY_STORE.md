@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](RELAY_STORE.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for `legax.relay/1` persisted relay records: sessions, generations, leases, handoffs, hosts, commands, inbox, artifacts, workflows, devices, and events. Read it before adding or changing relay-store fields. It does not own local daemon coordination; use `RUNTIME_STATE.md` for `data/runtime-state.json`.
+
 The relay store is the relay-owned persistence file behind `relay.storePath`. Development mode defaults to `./data/relay-store.json`; the standalone relay defaults to `/var/lib/legax-relay/relay-store.json`.
 
 `legax.relay/1` is the first formal relay store schema. It is not a V2 format because Legax has not shipped a stable V1 release.

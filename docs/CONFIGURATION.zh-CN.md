@@ -1,5 +1,12 @@
 # 配置契约
 
+## Agent Summary
+
+本文是 config key、YAML parser 限制、config 路径解析、示例配置结构以及新增字段兼容规则的事实源。修改 `config.example*.yaml`、`scripts/lib/yaml.mjs`、安装默认值或 adapter config shape 前先读本文。运行时行为除 config 解释外不归本文维护。
+
+Legax 使用一份操作者拥有的 YAML 配置文件。示例配置是面向用户的模板；本文档是维护者新增、解析和记录配置字段时遵循的契约。
+
+
 [English](CONFIGURATION.md) | 简体中文
 
 Legax 使用一份操作者拥有的 YAML 配置文件。示例配置是面向用户的模板；本文档是维护者新增、解析和记录配置字段时遵循的契约。

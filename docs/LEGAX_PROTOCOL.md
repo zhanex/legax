@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](LEGAX_PROTOCOL.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for portable cross-adapter protocol shapes: event envelopes, pairing offers, portable sessions, checkpoint artifacts, workflow action contracts, and shared semantic fields. Read it before changing event kinds or fields shared across adapters, daemon, relay, and transports. Endpoint mechanics belong in `RELAY_API.md`; persisted storage belongs in `RELAY_STORE.md`.
+
 The Legax protocol is the small event contract used between Legax adapters, the daemon, relay, Telegram, and future third-party integrations. It is intentionally narrower than any single CLI's native protocol.
 
 ## Event Envelope

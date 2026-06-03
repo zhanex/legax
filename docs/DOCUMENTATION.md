@@ -9,6 +9,7 @@ These rules apply to prose documentation, skill documentation, and commented exa
 - Keep the root README focused on what the project does, why it is useful, how to start, where to get help, and who maintains it.
 - Move long setup, architecture, adapter, plugin, and maintainer material into focused documents under `docs/`.
 - Keep `docs/README.md` as the documentation index so GitHub readers can navigate without scanning the whole tree.
+- Keep `docs/context_for_llms.md` as the only agent routing map. `AGENTS.md` stays a compact rule entry point, and `docs/CHANGE_MATRIX.md` stays focused on verification.
 - Keep community health files under `.github/`: contributing guide, code of conduct, security policy, support guide, issue forms, and PR template.
 - Use relative links for repository-local files so links work in clones, branches, and forks.
 
@@ -37,6 +38,7 @@ Put content in the narrowest stable document that owns the reader task:
 | --- | --- |
 | Project overview, quick start, support, and maintainer identity | Root `README.md` |
 | Documentation navigation | `docs/README.md` |
+| Agent context routing | `docs/context_for_llms.md` |
 | User setup and daily operation | `docs/USER_MANUAL.md` or integration-specific user docs |
 | Architecture boundaries, ownership, and lifecycle | `docs/ARCHITECTURE.md`, `docs/FUNCTIONAL_BOUNDARIES.md`, or an ADR |
 | Stable protocol, API, config, state, or adapter contracts | The matching contract document under `docs/` |
@@ -66,6 +68,7 @@ Do not duplicate a contract across multiple documents. Keep one canonical owner,
 
 - Use one `#` title that matches the document purpose.
 - Put the language switch link immediately below the title.
+- Long contract documents that agent workflows commonly load should put a short `## Agent Summary` after the language switch.
 - Use short, task-oriented section headings.
 - Use tables for mappings and matrices; use bullets for short rules; use numbered lists only for ordered procedures.
 - Use fenced code blocks with a language tag for commands, config, JSON, YAML, and shell snippets.
@@ -98,6 +101,7 @@ When adding an exception, document why an external renderer, package format, or 
 - Avoid editor or shell commands that silently rewrite UTF-8 as a local code page.
 - On Windows PowerShell 5.1, prefer Node.js, a modern editor, or `.NET` `UTF8Encoding(false)` when rewriting files.
 - Run `npm run check:docs` before submitting documentation changes.
+- `npm run check:docs` includes the context-budget gate for compact agent entry docs and `Agent Summary` coverage.
 
 ## Version References
 
@@ -113,6 +117,7 @@ When adding an exception, document why an external renderer, package format, or 
 ## Review Checklist
 
 - The content belongs in this document's canonical owner; otherwise link to the owner instead of duplicating it.
+- Agent routing belongs in `docs/context_for_llms.md`; verification routing belongs in `docs/CHANGE_MATRIX.md`.
 - The document describes shipped behavior, accepted design, or explicit roadmap intent rather than process notes.
 - The document follows the title, language-switch, heading, and fenced-code rules, or matches a documented format exception.
 - The English and Simplified Chinese files both exist.

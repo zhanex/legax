@@ -1,5 +1,12 @@
 # Relay API
 
+## Agent Summary
+
+本文是 Relay HTTP endpoint、auth class、请求/响应行为、状态码以及浏览器或 daemon API 兼容性的事实源。修改 `scripts/lib/relay-server-core.mjs` route 前先读本文。持久记录结构和 portable event 语义不归本文维护，分别使用 `RELAY_STORE.md` 和 `LEGAX_PROTOCOL.md`。
+
+本文档总结 `scripts/lib/relay-server-core.mjs` 实现的 HTTP API 契约。它补充描述可迁移事件和工作流概念的 [Legax 协议](LEGAX_PROTOCOL.zh-CN.md)，以及描述持久记录的 [Relay Store](RELAY_STORE.zh-CN.md)。
+
+
 [English](RELAY_API.md) | 简体中文
 
 本文档总结 `scripts/lib/relay-server-core.mjs` 实现的 HTTP API 契约。它补充描述可迁移事件和工作流概念的 [Legax 协议](LEGAX_PROTOCOL.zh-CN.md)，以及描述持久记录的 [Relay Store](RELAY_STORE.zh-CN.md)。

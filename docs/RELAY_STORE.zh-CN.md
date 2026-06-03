@@ -2,6 +2,10 @@
 
 [English](RELAY_STORE.md) | 简体中文
 
+## Agent Summary
+
+本文是 `legax.relay/1` 持久 relay 记录的事实源，包括 session、generation、lease、handoff、host、command、inbox、artifact、workflow、device 和 event。新增或修改 relay-store 字段前先读本文。本地 daemon 协调状态不归本文维护，`data/runtime-state.json` 使用 `RUNTIME_STATE.md`。
+
 Relay store 是 `relay.storePath` 指向的 relay 持久化文件。开发模式默认写到 `./data/relay-store.json`；独立部署 relay 默认写到 `/var/lib/legax-relay/relay-store.json`。
 
 `legax.relay/1` 是第一个正式 relay store schema。它不是 V2 格式，因为 Legax 还没有发布稳定 V1。

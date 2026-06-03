@@ -2,6 +2,10 @@
 
 [English](STATE_MACHINES.md) | 简体中文
 
+## Agent Summary
+
+本文是状态转换的事实源，包括 adapter runtime mode、daemon 与 adapter lifecycle、approval、lease、handoff、command、workflow 和 session selection。修改 transition rule 或 terminal state 前先读本文。本文补充存储和 endpoint 契约，但不维护字段级 schema。
+
 本文档集中记录 Legax 的状态转换；这些转换原本分散在架构、relay store、daemon 和 adapter 代码中。
 
 ## Adapter Runtime Mode

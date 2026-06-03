@@ -2,6 +2,10 @@
 
 [English](RUNTIME_STATE.md) | 简体中文
 
+## Agent Summary
+
+本文是 `data/runtime-state.json` 本地 daemon 与 adapter 协调状态的事实源，包括 cursor、mode、本地已选 session、transport target selection、inbox queue、launch request 和 fallback polling cursor。新增跨进程本地状态前先读本文。Portable relay 任务事实归 `RELAY_STORE.md`。
+
 `data/runtime-state.json` 是 daemon 与 adapter 进程共享的本地协调文件。它不是可迁移任务事实来源；后者归 [Relay Store](RELAY_STORE.zh-CN.md) 中记录的 relay store 所有。
 
 ## 归属边界
