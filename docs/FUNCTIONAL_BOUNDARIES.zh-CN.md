@@ -1,5 +1,12 @@
 # 功能边界
 
+## Agent Summary
+
+本文是产品范围、非目标、职责边界和安全约束的事实源。判断 Legax 是否应该拥有某个 workflow、远程动作、托管行为、approval 路径或 UI 能力前先读本文。Wire schema 和存储字段不归本文维护，应链接到对应契约文档而不是在这里重复。
+
+本文从业务流程角度描述 Legax：项目负责什么、不负责什么，各组件的职责边界在哪里，以及 relay 网页、Telegram 和飞书/Lark 如何把远端用户的一次操作闭环到本地 CLI Agent。
+
+
 [English](FUNCTIONAL_BOUNDARIES.md) | 简体中文
 
 

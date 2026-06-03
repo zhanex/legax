@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](RUNTIME_STATE.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for local daemon and adapter coordination in `data/runtime-state.json`: cursors, modes, selected local sessions, transport target selection, inbox queues, launch requests, and fallback polling cursors. Read it before adding cross-process local state. Portable relay task truth belongs in `RELAY_STORE.md`.
+
 `data/runtime-state.json` is the local coordination file shared by the daemon and adapter processes. It is not portable task truth; that belongs in the relay store documented in [Relay Store](RELAY_STORE.md).
 
 ## Ownership Boundary

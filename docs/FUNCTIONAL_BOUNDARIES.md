@@ -2,6 +2,12 @@
 
 English | [Simplified Chinese](FUNCTIONAL_BOUNDARIES.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for product scope, non-goals, responsibility boundaries, and safety constraints. Read it when deciding whether Legax should own a workflow, remote action, hosted behavior, approval path, or UI capability. It does not own wire schemas or storage fields; link to the relevant contract instead of duplicating them here.
+
+This document describes Legax from a business workflow perspective. It defines what the product does, which component owns each responsibility, and how the web relay, Telegram, and Feishu/Lark interactions close the loop from a remote user action back to a local CLI agent.
+
 
 ## Product Boundary
 

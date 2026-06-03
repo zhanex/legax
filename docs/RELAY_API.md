@@ -2,6 +2,12 @@
 
 English | [Simplified Chinese](RELAY_API.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for Relay HTTP endpoints, auth classes, request and response behavior, status codes, and browser or daemon API compatibility. Read it before changing `scripts/lib/relay-server-core.mjs` routes. It does not own persisted record structure or portable event semantics; use `RELAY_STORE.md` and `LEGAX_PROTOCOL.md` for those.
+
+This document summarizes the HTTP API contract implemented by `scripts/lib/relay-server-core.mjs`. It complements [Legax Protocol](LEGAX_PROTOCOL.md), which describes portable event and workflow concepts, and [Relay Store](RELAY_STORE.md), which describes persisted records.
+
 
 ## Conventions
 

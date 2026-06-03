@@ -2,6 +2,10 @@
 
 [English](ARCHITECTURE.md) | 简体中文
 
+## Agent Summary
+
+本文是 Legax control、capability、communication 三个 plane 的事实源。修改进程生命周期、daemon 所有权、adapter 监督、MCP 边界或 transport 路由前先读本文。Endpoint schema、relay 持久记录和 config 字段不归本文维护，分别使用 `RELAY_API.md`、`RELAY_STORE.md` 和 `CONFIGURATION.md`。
+
 Legax 是面向 Agent CLI 的 session 管理与工作流编排层。项目使用通用事件模型，让已支持的 Agent CLI 和未来适配器共享同一套路由、审批、通知、relay store 和工作流基础设施。
 
 ## 设计目标

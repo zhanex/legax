@@ -2,6 +2,10 @@
 
 English | [Simplified Chinese](ENGINEERING_GUIDE.zh-CN.md)
 
+## Agent Summary
+
+This is the owner for day-to-day engineering rules: naming, constants, directory ownership, shared-code boundaries, patterns, anti-patterns, error handling, and test expectations. Read it before non-trivial code changes. It does not replace architecture or protocol contracts; use the relevant owner document when changing behavior.
+
 This guide defines day-to-day engineering rules for Legax contributors. It complements [Architecture](ARCHITECTURE.md), [Adapter Conformance](ADAPTER_CONFORMANCE.md), and [Extending Legax](EXTENDING.md) by turning the architecture into naming, directory, pattern, and review rules.
 
 ## Scope
