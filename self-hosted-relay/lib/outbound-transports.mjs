@@ -392,6 +392,24 @@ function htmlCode(value) {
   return `<code>${escapeHtml(value)}</code>`;
 }
 
+function eventHostId(event) {
+  return firstText([
+    event.metadata?.targetHostId,
+    event.metadata?.hostId,
+    event.targetHostId,
+    event.hostId
+  ]);
+}
+
+function eventMachineName(event) {
+  return firstText([
+    event.metadata?.hostLabel,
+    event.metadata?.hostName,
+    event.metadata?.machineName,
+    eventHostId(event)
+  ]);
+}
+
 function feishuApiBaseUrl(transport) {
   if (transport.apiBaseUrl) return String(transport.apiBaseUrl).replace(/\/+$/, "");
   const platform = String(transport.platform ?? transport.region ?? "").trim().toLowerCase();
@@ -460,6 +478,7 @@ function formatFeishuText(event) {
 
 function formatFeishuCardContext(event) {
   return [
+    eventMachineName(event) ? `**Machine:** ${larkMdEscape(compactHeaderValue(eventMachineName(event), 120))}` : undefined,
     projectName(event) ? `**Project:** ${larkMdEscape(compactHeaderValue(projectName(event), 120))}` : undefined,
     sessionName(event) ? `**Session:** ${larkMdEscape(compactHeaderValue(sessionName(event), 120))}` : undefined,
     workingDirectory(event) ? `**Dir:** ${larkMdEscape(compactHeaderValue(workingDirectory(event), 180))}` : undefined
@@ -515,18 +534,21 @@ function formatFeishuCard(event) {
   }
   if (event.kind === "permission_request" && requestId) {
     const targetAgentId = event.metadata?.targetAgentId ?? event.metadata?.agentId ?? event.agentId;
+    const targetHostId = eventHostId(event);
     elements.push({
       tag: "action",
       actions: [
         feishuCardButton("Approve", "primary", {
           legaxAction: "approve",
           requestId,
-          targetAgentId
+          targetAgentId,
+          targetHostId
         }),
         feishuCardButton("Deny", "danger", {
           legaxAction: "deny",
           requestId,
-          targetAgentId
+          targetAgentId,
+          targetHostId
         })
       ]
     });
@@ -595,6 +617,7 @@ function workingDirectory(event) {
 function formatTelegramContextLines(event) {
   const cwd = workingDirectory(event);
   return [
+    eventMachineName(event) ? `Machine: ${htmlCode(compactHeaderValue(eventMachineName(event), 120))}` : undefined,
     cwd ? `Dir: ${htmlCode(compactHeaderValue(cwd, 180))}` : undefined,
     projectName(event) ? `Project: ${htmlCode(compactHeaderValue(projectName(event)))}` : undefined,
     sessionName(event) ? `Session: ${htmlCode(compactHeaderValue(sessionName(event)))}` : undefined
@@ -767,6 +790,7 @@ function activeTelegramContext(event) {
   ]);
   if (!cli) return null;
   const context = {
+    machine: eventMachineName(event),
     cli,
     project: projectName(event),
     session: sessionName(event),
@@ -804,6 +828,7 @@ function formatActiveTelegramContext(event) {
   const activeLabel = context.session || context.project || context.cli;
   return [
     `<b>active:</b> ${htmlCode(compactHeaderValue(activeLabel, 160))}`,
+    context.machine ? `Machine: ${htmlCode(compactHeaderValue(context.machine, 120))}` : undefined,
     context.project ? `Project: ${htmlCode(compactHeaderValue(context.project, 120))}` : undefined,
     `CLI: ${htmlCode(compactHeaderValue(context.cli, 100))}`,
     context.dir ? `Dir: ${htmlCode(compactHeaderValue(context.dir, 180))}` : undefined
@@ -948,7 +973,10 @@ function sessionReplyMarkup(event) {
   const agentId = event.metadata?.agentId ?? event.agentId;
   const threadId = event.metadata?.threadId ?? event.metadata?.sessionId;
   if (!agentId || !threadId) return null;
-  const callbackData = `legax:session:${encodeURIComponent(agentId)}:${encodeURIComponent(threadId)}`;
+  const hostId = eventHostId(event);
+  const callbackData = hostId
+    ? `legax:h:${encodeURIComponent(hostId)}:session:${encodeURIComponent(agentId)}:${encodeURIComponent(threadId)}`
+    : `legax:session:${encodeURIComponent(agentId)}:${encodeURIComponent(threadId)}`;
   if (callbackData.length > 64) return {
     inline_keyboard: hierarchyRows(agentId, { level: "session" })
   };
@@ -964,8 +992,13 @@ function permissionReplyMarkup(event) {
   if (event.kind !== "permission_request") return null;
   const requestId = event.metadata?.requestId;
   if (!requestId) return null;
-  const approve = `legax:approve:${encodeURIComponent(requestId)}`;
-  const deny = `legax:deny:${encodeURIComponent(requestId)}`;
+  const hostId = eventHostId(event);
+  const approve = hostId
+    ? `legax:h:${encodeURIComponent(hostId)}:approve:${encodeURIComponent(requestId)}`
+    : `legax:approve:${encodeURIComponent(requestId)}`;
+  const deny = hostId
+    ? `legax:h:${encodeURIComponent(hostId)}:deny:${encodeURIComponent(requestId)}`
+    : `legax:deny:${encodeURIComponent(requestId)}`;
   if (approve.length > 64 || deny.length > 64) return sessionReplyMarkup(event);
   const rows = [
     [
@@ -976,6 +1009,47 @@ function permissionReplyMarkup(event) {
   const session = sessionReplyMarkup(event);
   if (session?.inline_keyboard?.length) rows.push(...session.inline_keyboard);
   return { inline_keyboard: rows };
+}
+
+function hostAwareCallbackData(data, hostId, fallbackIndex = 0) {
+  const value = String(data ?? "");
+  if (!hostId || !value || value.startsWith("legax:h:")) return value;
+  const encodedHost = encodeURIComponent(hostId);
+  const session = value.match(/^legax:session:([^:]+):(.+)$/);
+  if (session) {
+    const next = `legax:h:${encodedHost}:session:${session[1]}:${session[2]}`;
+    if (next.length <= 64) return next;
+    const fallback = `legax:h:${encodedHost}:session:${session[1]}:${Math.max(1, Number(fallbackIndex) + 1)}`;
+    return fallback.length <= 64 ? fallback : value;
+  }
+  const mappings = [
+    [/^legax:agent:([^:]+)$/, (match) => `legax:h:${encodedHost}:agent:${match[1]}`],
+    [/^legax:projects:([^:]+)(?::(\d+))?$/, (match) => `legax:h:${encodedHost}:projects:${match[1]}${match[2] ? `:${match[2]}` : ""}`],
+    [/^legax:sessions:([^:]+)$/, (match) => `legax:h:${encodedHost}:sessions:${match[1]}`],
+    [/^legax:(project|chat):([^:]+):([^:]+)(?::(\d+))?$/, (match) => `legax:h:${encodedHost}:${match[1]}:${match[2]}:${match[3]}${match[4] ? `:${match[4]}` : ""}`],
+    [/^legax:new:([^:]+)$/, (match) => `legax:h:${encodedHost}:new:${match[1]}`],
+    [/^legax:new-project:([^:]+)$/, (match) => `legax:h:${encodedHost}:new-project:${match[1]}`],
+    [/^legax:(approve|deny):(.+)$/, (match) => `legax:h:${encodedHost}:${match[1]}:${match[2]}`]
+  ];
+  for (const [pattern, build] of mappings) {
+    const match = value.match(pattern);
+    if (!match) continue;
+    const next = build(match);
+    return next.length <= 64 ? next : value;
+  }
+  return value;
+}
+
+function hostAwareReplyMarkup(markup, hostId) {
+  if (!markup || !Array.isArray(markup.inline_keyboard) || !hostId) return markup;
+  return {
+    ...markup,
+    inline_keyboard: markup.inline_keyboard.map((row, rowIndex) => (row || []).map((item) => {
+      if (!item?.callback_data) return item;
+      const callbackData = hostAwareCallbackData(item.callback_data, hostId, rowIndex);
+      return callbackData === item.callback_data ? item : { ...item, callback_data: callbackData };
+    }))
+  };
 }
 
 async function sendViaRelay(transport, event) {
@@ -992,7 +1066,10 @@ export function buildTelegramMessagePayloads(config, transport, event) {
   if (suppressTelegram(event)) return [];
   const policy = telegramNotificationPolicy(config, transport, event);
   if (!shouldSendTelegramEvent(policy, event)) return [];
-  const replyMarkup = event.metadata?.telegramReplyMarkup ?? event.metadata?.replyMarkup ?? permissionReplyMarkup(event) ?? sessionReplyMarkup(event);
+  const replyMarkup = hostAwareReplyMarkup(
+    event.metadata?.telegramReplyMarkup ?? event.metadata?.replyMarkup ?? permissionReplyMarkup(event) ?? sessionReplyMarkup(event),
+    eventHostId(event)
+  );
   const texts = formatTelegramMessages(event, policy);
   return texts.map((text, index) => {
     const payload = {

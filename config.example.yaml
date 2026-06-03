@@ -15,6 +15,7 @@ relay:
   host: 0.0.0.0
   port: 8787
   publicBaseUrl: https://YOUR_RELAY_HOST          # public HTTPS URL used by Telegram Mini Apps
+  locale: auto                                    # auto, en, or zh-CN for relay pages and relay-owned transport text
   telegramWebAppLaunchTokenTtlMs: 300000          # short-lived TWA launch token TTL
   secret: replace-with-a-long-random-secret    # desktop-side secret; matches transports[type=relay].secret
   storePath: ./data/relay-store.json

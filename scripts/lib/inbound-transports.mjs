@@ -156,6 +156,149 @@ function parseTelegramCallback(data, updateId, targetAgentId, createdAt, pollerA
       receivedAt: new Date().toISOString()
     };
   }
+  const hostAgent = value.match(/^legax:h:([^:]+):agent:([^:]+)$/);
+  if (hostAgent) {
+    const hostId = decodeCallbackPart(hostAgent[1]);
+    const agentId = decodeCallbackPart(hostAgent[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_projects",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/projects ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostListProjects = value.match(/^legax:h:([^:]+):projects:([^:]+)(?::(\d+))?$/);
+  if (hostListProjects) {
+    const hostId = decodeCallbackPart(hostListProjects[1]);
+    const agentId = decodeCallbackPart(hostListProjects[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_projects",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      page: parseCallbackPage(hostListProjects[3]),
+      text: `/projects ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostListSessions = value.match(/^legax:h:([^:]+):sessions:([^:]+)$/);
+  if (hostListSessions) {
+    const hostId = decodeCallbackPart(hostListSessions[1]);
+    const agentId = decodeCallbackPart(hostListSessions[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_sessions",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/sessions ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostProject = value.match(/^legax:h:([^:]+):(project|chat):([^:]+):([^:]+)(?::(\d+))?$/);
+  if (hostProject) {
+    const hostId = decodeCallbackPart(hostProject[1]);
+    const agentId = decodeCallbackPart(hostProject[3]);
+    const projectRef = decodeCallbackPart(hostProject[4]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_sessions",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      projectRef,
+      page: parseCallbackPage(hostProject[5]),
+      text: `/sessions ${agentId} ${projectRef}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostSession = value.match(/^legax:h:([^:]+):session:([^:]+):(.+)$/);
+  if (hostSession) {
+    const hostId = decodeCallbackPart(hostSession[1]);
+    const agentId = decodeCallbackPart(hostSession[2]);
+    const threadRef = decodeCallbackPart(hostSession[3]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "select_session",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      threadRef,
+      text: `/use ${agentId} ${threadRef}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostNew = value.match(/^legax:h:([^:]+):new:([^:]+)$/);
+  if (hostNew) {
+    const hostId = decodeCallbackPart(hostNew[1]);
+    const agentId = decodeCallbackPart(hostNew[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "new_session",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/new ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostNewProject = value.match(/^legax:h:([^:]+):new-project:([^:]+)$/);
+  if (hostNewProject) {
+    const hostId = decodeCallbackPart(hostNewProject[1]);
+    const agentId = decodeCallbackPart(hostNewProject[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "new_project_preflight",
+      targetHostId: hostId,
+      targetAgentId: "legax-daemon",
+      selectedAgentId: agentId,
+      text: `/new-project ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostApproval = value.match(/^legax:h:([^:]+):(approve|deny):(.+)$/);
+  if (hostApproval) {
+    const hostId = decodeCallbackPart(hostApproval[1]);
+    const action = hostApproval[2];
+    const requestId = decodeCallbackPart(hostApproval[3]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "permission_decision",
+      targetHostId: hostId,
+      targetAgentId: targetFromRequestId(requestId, targetAgentId),
+      requestId,
+      decision: action,
+      text: action === "approve" ? "Approved from Telegram" : "Denied from Telegram",
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
   const selectAgent = value.match(/^legax:agent:([^:]+)$/);
   if (selectAgent) {
     const agentId = decodeCallbackPart(selectAgent[1]);
@@ -537,6 +680,7 @@ async function pollTelegram(config, agent, transport, options = {}) {
   const messages = [];
   let nextOffset = cursor.offset;
   const targetAgentId = defaultTarget(config, transport, agent);
+  const selectedTargetHostId = getTransportSelection(config, key).targetHostId ?? "";
   for (const update of response.result ?? []) {
     nextOffset = Math.max(Number(nextOffset ?? 0), Number(update.update_id) + 1);
     const callback = update.callback_query;
@@ -544,6 +688,7 @@ async function pollTelegram(config, agent, transport, options = {}) {
       const chat = callback.message?.chat ?? callback.from;
       if (String(chat?.id) !== String(chatId)) continue;
       const parsed = parseTelegramCallback(callback.data, update.update_id, targetAgentId, new Date().toISOString(), pollerAgentId);
+      if (parsed && selectedTargetHostId && !parsed.targetHostId) parsed.targetHostId = selectedTargetHostId;
       if (parsed) messages.push(parsed);
       if (callback.id) {
         void httpJson(telegramApiUrl(transport, token, "answerCallbackQuery"), {
@@ -557,6 +702,7 @@ async function pollTelegram(config, agent, transport, options = {}) {
     if (!message?.text) continue;
     if (String(message.chat?.id) !== String(chatId)) continue;
     const parsed = parseTelegramText(message.text, update.update_id, targetAgentId, telegramCreatedAt(message), pollerAgentId);
+    if (parsed && selectedTargetHostId && !parsed.targetHostId) parsed.targetHostId = selectedTargetHostId;
     if (parsed) messages.push(parsed);
   }
   const routed = routeInboundMessages(config, agent, messages, {
@@ -641,21 +787,24 @@ function expandBroadcastMessages(config, agent, messages) {
 function updateTransportSelectionFromMessages(config, key, messages) {
   for (const message of messages) {
     if (message.type !== "control") continue;
-    if (message.action === "list_agent_projects") {
-      setTransportSelection(config, key, {
-        targetAgentId: message.targetAgentId
-      });
-    }
-    if (message.action === "list_agent_sessions") {
-      setTransportSelection(config, key, {
-        targetAgentId: message.targetAgentId,
-        selectedProjectRef: message.projectRef
-      });
-    }
-    if (message.action === "select_session") {
-      setTransportSelection(config, key, {
-        targetAgentId: message.targetAgentId,
-        selectedThreadId: message.threadRef
+  if (message.action === "list_agent_projects") {
+    setTransportSelection(config, key, {
+      targetHostId: message.targetHostId,
+      targetAgentId: message.targetAgentId
+    });
+  }
+  if (message.action === "list_agent_sessions") {
+    setTransportSelection(config, key, {
+      targetHostId: message.targetHostId,
+      targetAgentId: message.targetAgentId,
+      selectedProjectRef: message.projectRef
+    });
+  }
+  if (message.action === "select_session") {
+    setTransportSelection(config, key, {
+      targetHostId: message.targetHostId,
+      targetAgentId: message.targetAgentId,
+      selectedThreadId: message.threadRef
       });
     }
   }

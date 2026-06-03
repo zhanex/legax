@@ -89,6 +89,149 @@ export function parseTelegramCallback(data, updateId, targetAgentId, createdAt, 
       receivedAt: new Date().toISOString()
     };
   }
+  const hostAgent = value.match(/^legax:h:([^:]+):agent:([^:]+)$/);
+  if (hostAgent) {
+    const hostId = decodeCallbackPart(hostAgent[1]);
+    const agentId = decodeCallbackPart(hostAgent[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_projects",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/projects ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostListProjects = value.match(/^legax:h:([^:]+):projects:([^:]+)(?::(\d+))?$/);
+  if (hostListProjects) {
+    const hostId = decodeCallbackPart(hostListProjects[1]);
+    const agentId = decodeCallbackPart(hostListProjects[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_projects",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      page: parseCallbackPage(hostListProjects[3]),
+      text: `/projects ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostListSessions = value.match(/^legax:h:([^:]+):sessions:([^:]+)$/);
+  if (hostListSessions) {
+    const hostId = decodeCallbackPart(hostListSessions[1]);
+    const agentId = decodeCallbackPart(hostListSessions[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_sessions",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/sessions ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostProject = value.match(/^legax:h:([^:]+):(project|chat):([^:]+):([^:]+)(?::(\d+))?$/);
+  if (hostProject) {
+    const hostId = decodeCallbackPart(hostProject[1]);
+    const agentId = decodeCallbackPart(hostProject[3]);
+    const projectRef = decodeCallbackPart(hostProject[4]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "list_agent_sessions",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      projectRef,
+      page: parseCallbackPage(hostProject[5]),
+      text: `/sessions ${agentId} ${projectRef}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostSession = value.match(/^legax:h:([^:]+):session:([^:]+):(.+)$/);
+  if (hostSession) {
+    const hostId = decodeCallbackPart(hostSession[1]);
+    const agentId = decodeCallbackPart(hostSession[2]);
+    const threadRef = decodeCallbackPart(hostSession[3]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "select_session",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      threadRef,
+      text: `/use ${agentId} ${threadRef}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostNew = value.match(/^legax:h:([^:]+):new:([^:]+)$/);
+  if (hostNew) {
+    const hostId = decodeCallbackPart(hostNew[1]);
+    const agentId = decodeCallbackPart(hostNew[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "new_session",
+      targetHostId: hostId,
+      targetAgentId: agentId,
+      selectedAgentId: agentId,
+      text: `/new ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostNewProject = value.match(/^legax:h:([^:]+):new-project:([^:]+)$/);
+  if (hostNewProject) {
+    const hostId = decodeCallbackPart(hostNewProject[1]);
+    const agentId = decodeCallbackPart(hostNewProject[2]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "control",
+      action: "new_project_preflight",
+      targetHostId: hostId,
+      targetAgentId: "legax-daemon",
+      selectedAgentId: agentId,
+      text: `/new-project ${agentId}`,
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
+  const hostApproval = value.match(/^legax:h:([^:]+):(approve|deny):(.+)$/);
+  if (hostApproval) {
+    const hostId = decodeCallbackPart(hostApproval[1]);
+    const action = hostApproval[2];
+    const requestId = decodeCallbackPart(hostApproval[3]);
+    return {
+      id: `telegram:${updateId}`,
+      transport: "telegram",
+      type: "permission_decision",
+      targetHostId: hostId,
+      targetAgentId: targetFromRequestId(requestId, targetAgentId),
+      requestId,
+      decision: action,
+      text: action === "approve" ? "Approved from Telegram" : "Denied from Telegram",
+      createdAt,
+      receivedAt: new Date().toISOString()
+    };
+  }
   const selectAgent = value.match(/^legax:agent:([^:]+)$/);
   if (selectAgent) {
     const agentId = decodeCallbackPart(selectAgent[1]);

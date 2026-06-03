@@ -9,6 +9,7 @@ relay:
   host: 0.0.0.0
   port: 8787
   publicBaseUrl: https://YOUR_RELAY_HOST              # public HTTPS URL used by Telegram Mini Apps
+  locale: auto                                        # auto, en, or zh-CN for relay pages and relay-owned transport text
   secret: replace-with-a-long-random-secret           # required; matches transports[type=relay].secret on the desktop side
   storePath: /var/lib/legax-relay/relay-store.json
   audit:

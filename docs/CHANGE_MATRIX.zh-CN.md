@@ -16,6 +16,8 @@
 | `scripts/lib/menu-groups.mjs`、`scripts/lib/project-browser.mjs` | `node --test tests/e2e/daemon.e2e.mjs tests/e2e/relay.e2e.mjs`，然后 `npm run check:node` |
 | `scripts/lib/relay-server-core.mjs`、`self-hosted-relay/server.mjs`、`self-hosted-relay/lib/relay-server-core.mjs` | `node --test tests/e2e/relay.e2e.mjs`，加相关 relay 功能测试，然后 `npm run check:node` |
 | `scripts/lib/outbound-transports.mjs`、`scripts/lib/inbound-transports.mjs`、`scripts/lib/telegram-transport.mjs`、飞书/Lark transport 代码 | `node --test tests/e2e/inbound-transports.e2e.mjs tests/e2e/feishu-transport.e2e.mjs tests/e2e/relay.e2e.mjs`，然后 `npm run check:node` |
+| `scripts/lib/i18n.mjs`、`self-hosted-relay/lib/i18n.mjs` | `node --test tests/e2e/relay-ui-interactions.e2e.mjs tests/e2e/daemon.e2e.mjs`、`npm run check:docs`，然后 `npm run check:node` |
+| `scripts/lib/relay-ui-actions.mjs`、`self-hosted-relay/lib/relay-ui-actions.mjs` | `node --test tests/e2e/relay-ui-interactions.e2e.mjs tests/e2e/relay.e2e.mjs`，然后 `npm run check:node` |
 | `scripts/lib/yaml.mjs`、`self-hosted-relay/lib/yaml.mjs`、`config.example.yaml`、`config.example.zh-CN.yaml`、`self-hosted-relay/config.example.yaml`、`self-hosted-relay/config.example.zh-CN.yaml` | `npm run check:docs`、相关配置消费 E2E，然后 `npm run check:node` |
 | `scripts/lib/legax-protocol.mjs` | `node --test tests/e2e/legax-protocol.e2e.mjs tests/e2e/relay.e2e.mjs`，然后 `npm run check:node` |
 | `scripts/lib/checkpoint-artifacts.mjs` | `node --test tests/e2e/checkpoint-artifacts.e2e.mjs tests/e2e/relay.e2e.mjs`，然后 `npm run check:node` |

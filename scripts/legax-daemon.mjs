@@ -485,12 +485,14 @@ function configuredAgentCatalog(adapters) {
   }));
 }
 
-function agentsReplyMarkup(adapters) {
+function agentsReplyMarkup(adapters, hostId = "") {
   return {
     inline_keyboard: [
       ...buttonRows(adapters.map((adapter) => ({
         text: adapter.agentLabel,
-        callback_data: `legax:agent:${encodeURIComponent(adapter.agentId)}`
+        callback_data: hostId
+          ? `legax:h:${encodeURIComponent(hostId)}:agent:${encodeURIComponent(adapter.agentId)}`
+          : `legax:agent:${encodeURIComponent(adapter.agentId)}`
       })), 2),
       ...hierarchyRows(null, { level: "cli" })
     ]
@@ -759,6 +761,7 @@ class RemoteRouter {
       const url = new URL("/api/messages", transport.baseUrl);
       url.searchParams.set("sessionId", this.config.sessionId);
       url.searchParams.set("after", String(after));
+      url.searchParams.set("hostId", this.hostId);
       const headers = transport.secret ? { "x-legax-secret": transport.secret } : {};
       const response = await httpJson(url, { headers }, Number(transport.timeoutMs ?? 15000));
       const rawMessages = response.messages ?? [];
@@ -806,9 +809,11 @@ class RemoteRouter {
       sourceName: "Legax",
       text: formatAgentList(this.adapters),
       metadata: {
+        hostId: this.hostId,
+        hostLabel: this.config.displayName ?? this.hostId,
         controlMessageId: message.id,
-        replyMarkup: agentsReplyMarkup(this.adapters),
-        telegramReplyMarkup: agentsReplyMarkup(this.adapters)
+        replyMarkup: agentsReplyMarkup(this.adapters, this.hostId),
+        telegramReplyMarkup: agentsReplyMarkup(this.adapters, this.hostId)
       },
       createdAt: new Date().toISOString()
     };
@@ -1157,7 +1162,8 @@ class AdapterSupervisor {
         LEGAX_CONFIG: this.config.configPath,
         ...(this.config.daemon?.remoteRouter === false ? {} : {
           LEGAX_DAEMON_CHILD: "1",
-          LEGAX_DAEMON_ROUTER: "1"
+          LEGAX_DAEMON_ROUTER: "1",
+          LEGAX_DAEMON_HOST_ID: daemonHostId(this.config)
         })
       },
       stdio: ["ignore", "pipe", "pipe"],

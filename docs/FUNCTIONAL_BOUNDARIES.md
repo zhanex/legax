@@ -9,8 +9,6 @@ This is the owner for product scope, non-goals, responsibility boundaries, and s
 This document describes Legax from a business workflow perspective. It defines what the product does, which component owns each responsibility, and how the web relay, Telegram, and Feishu/Lark interactions close the loop from a remote user action back to a local CLI agent.
 
 
-This document describes Legax from a business workflow perspective. It defines what the product does, which component owns each responsibility, and how the web relay, Telegram, and Feishu/Lark interactions close the loop from a remote user action back to a local CLI agent.
-
 ## Product Boundary
 
 Legax manages cross-device session routing, task identity, remote interaction, approval decisions, handoffs, and controlled workflow steps for agent CLIs.
@@ -86,6 +84,7 @@ Desktop-side relay APIs use `x-legax-secret`. These APIs are for the daemon, ada
 Browser-side relay APIs use only the paired `legax_device` HttpOnly cookie:
 
 - `GET /api/events`
+- `GET /api/hosts`
 - `GET /api/agents`
 - `GET /api/attention`
 - `POST /api/attention/ack`
@@ -165,13 +164,15 @@ Goal: keep the user-facing task identity portable across hosts while native CLI 
 
 Completion: the relay can show the portable session id, current generation, lease holder, handoff history, and fork lineage without treating native CLI ids as the primary identity.
 
-### 4. Choose CLI, Project, and Session in the Relay Web Page
+### 4. Choose Machine, CLI, Project, and Session in the Relay Web Page
 
 Goal: every outgoing message has an explicit target.
 
-The active target is displayed as `CLI / Project / Session` near the top of the conversation. Each segment is clickable and opens a scoped switcher:
+The active machine is displayed in the top connection status control as machine name plus explicit Online/Offline text. Clicking it opens the machine picker. Online machines can become the current target; offline machines stay visible for diagnostics but cannot receive new browser messages.
 
-- **CLI segment**: shows all supported CLI adapters from the daemon, including adapters that have not started. Choosing a CLI sets the active CLI, asks for that adapter's session list, then opens the project chooser.
+The active CLI target is displayed as `CLI / Project / Session` near the top of the conversation. Machine is intentionally not part of this segmented target bar. Each segment is clickable and opens a scoped switcher:
+
+- **CLI segment**: shows all supported CLI adapters reported by the selected machine, including adapters that have not started. Choosing a CLI sets the active CLI, asks that machine's adapter for its session list, then opens the project chooser.
 - **Project segment**: shows projects or chats known for the selected CLI. **Chats** is always present as the direct-conversation scope. Sessions without project metadata belong under **Chats**; Claude cwd-only history is also available under **Chats** so users can continue ordinary Claude conversations from the phone. Codex app-server sessions are treated as chats unless they carry an explicit project id or project name. OpenCode sessions use their server-reported cwd/project path when present and otherwise fall under **Chats**. Choosing a project/chat sets the scope and opens the session chooser. If no project context is known, **Load sessions** asks the adapter to list sessions.
 - **Session segment**: shows sessions under the selected CLI and project. Choosing one posts `select_session` and makes future text go to that session. Archived sessions are hidden. Lists show up to 10 rows per page and expose **Previous** / **Next** buttons when more rows are available.
 
@@ -182,7 +183,7 @@ Switcher action buttons:
 - **Refresh sessions**: posts `list_agent_sessions` for the active CLI and current project context when known.
 - **New session**: posts `new_session` for the active CLI.
 
-Completion: the composer is enabled only when a CLI target exists; session-specific adapters receive `select_session` before normal text when a session is chosen.
+Completion: the composer is enabled only when an online machine and CLI target exist. Browser messages, approval decisions, input responses, and session actions carry `targetHostId` and `targetAgentId`, so two machines with the same adapter id do not both receive ordinary text or callbacks.
 
 ### 5. Read and Reply in the Relay Web Page
 
@@ -192,7 +193,7 @@ Goal: keep remote conversation readable while preserving the underlying agent ev
 2. Status, message, approval, and input-request events have distinct visual treatments.
 3. The visible message body removes repeated transport headers and keeps the project/session context in the surrounding UI.
 4. User writes text in the reply box and clicks **Send**.
-5. Browser posts `POST /api/messages` with `targetAgentId` and text.
+5. Browser posts `POST /api/messages` with `targetHostId`, `targetAgentId`, and text.
 6. Daemon routes the message to the selected adapter.
 7. Adapter sends the text into the active CLI/session and posts new events back to the relay.
 
@@ -208,7 +209,7 @@ Goal: mirror the native CLI approval request without bypassing it when the selec
 4. Telegram renders inline **Approve** and **Deny** buttons when Telegram is enabled.
 5. Feishu/Lark renders interactive **Approve** and **Deny** card buttons when Feishu/Lark is enabled.
 6. User clicks one action.
-7. Relay, Telegram, or Feishu/Lark sends a `permission_decision` message.
+7. Relay, Telegram, or Feishu/Lark sends a `permission_decision` message with the original host, adapter, and request id.
 8. Adapter waits for that decision and returns it through the CLI's native approval channel.
 
 Completion: the CLI receives an explicit approval or denial from its own structured callback path. Adapters without a native callback, such as the current OpenCode bridge, must not claim phone approval support.

@@ -964,14 +964,15 @@ transports:
   telegram.pushMessage("/start");
   const menu = await telegram.waitForSend((body) => /Choose a CLI adapter/.test(body.text ?? ""), { detail: () => stderr });
   assert.match(menu.text, /Gemini CLI/);
-  assert.equal(menu.reply_markup.inline_keyboard[0][0].callback_data, "legax:agent:gemini-cli");
+  const geminiAgentCallback = menu.reply_markup.inline_keyboard[0][0].callback_data;
+  assert.match(geminiAgentCallback, /^legax:h:[^:]+:agent:gemini-cli$/);
   assert.deepEqual(lastRow(menu).map((item) => item.text), ["CLI"]);
 
-  telegram.pushCallback("legax:agent:gemini-cli");
+  telegram.pushCallback(geminiAgentCallback);
   const projectMenu = await telegram.waitForSend((body) => /project\/chat/i.test(body.text ?? "") && /Gemini CLI/i.test(body.text ?? ""), { detail: () => stderr });
   assert.deepEqual(lastRow(projectMenu).map((item) => item.text), ["CLI", "Prj"]);
   const projectCallbacks = (projectMenu.reply_markup?.inline_keyboard ?? []).flat().map((item) => item.callback_data);
-  assert.ok(projectCallbacks.some((callback) => /^legax:project:gemini-cli:/.test(callback)), JSON.stringify(projectMenu.reply_markup));
+  assert.ok(projectCallbacks.some((callback) => /^legax:h:[^:]+:project:gemini-cli:/.test(callback)), JSON.stringify(projectMenu.reply_markup));
   assert.ok(!projectCallbacks.some((callback) => /^legax:(?:session|sessions|new):/.test(callback ?? "")), JSON.stringify(projectMenu.reply_markup));
   assert.match(projectMenu.text, /alpha/);
   assert.match(projectMenu.text, /beta/);
@@ -984,7 +985,7 @@ transports:
   assert.doesNotMatch(chatSessionMenu.text, /Alpha build session/);
   assert.doesNotMatch(chatSessionMenu.text, /Beta release session/);
 
-  telegram.pushCallback("legax:projects:gemini-cli");
+  telegram.pushCallback(projectCallbacks.find((callback) => /^legax:h:[^:]+:projects:gemini-cli$/.test(callback ?? "")) ?? "legax:projects:gemini-cli");
   const projectMenuAgain = await telegram.waitForSend((body) => /project\/chat/i.test(body.text ?? "") && /Gemini CLI/i.test(body.text ?? ""), { detail: () => stderr });
   const projectButton = firstButton(projectMenuAgain, (item) => /^\d+\. alpha /.test(item.text ?? ""));
   assert.ok(projectButton, JSON.stringify(projectMenuAgain.reply_markup));
@@ -994,8 +995,8 @@ transports:
   assert.deepEqual(lastRow(sessionMenu).map((item) => item.text), ["CLI", "Prj", "Session"]);
   assert.doesNotMatch(sessionMenu.text, /Beta release session/);
   const sessionCallbacks = (sessionMenu.reply_markup?.inline_keyboard ?? []).flat().map((item) => item.callback_data);
-  assert.ok(sessionCallbacks.some((callback) => /^legax:session:gemini-cli:/.test(callback ?? "")), JSON.stringify(sessionMenu.reply_markup));
-  const sessionButton = firstCallback(sessionMenu, /^legax:session:gemini-cli:/);
+  assert.ok(sessionCallbacks.some((callback) => /^legax:h:[^:]+:session:gemini-cli:/.test(callback ?? "")), JSON.stringify(sessionMenu.reply_markup));
+  const sessionButton = firstCallback(sessionMenu, /^legax:h:[^:]+:session:gemini-cli:/);
   assert.ok(sessionButton, JSON.stringify(sessionMenu.reply_markup));
 
   telegram.pushCallback(sessionButton.callback_data);

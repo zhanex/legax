@@ -9,8 +9,6 @@ This is the owner for Relay HTTP endpoints, auth classes, request and response b
 This document summarizes the HTTP API contract implemented by `scripts/lib/relay-server-core.mjs`. It complements [Legax Protocol](LEGAX_PROTOCOL.md), which describes portable event and workflow concepts, and [Relay Store](RELAY_STORE.md), which describes persisted records.
 
 
-This document summarizes the HTTP API contract implemented by `scripts/lib/relay-server-core.mjs`. It complements [Legax Protocol](LEGAX_PROTOCOL.md), which describes portable event and workflow concepts, and [Relay Store](RELAY_STORE.md), which describes persisted records.
-
 ## Conventions
 
 - All API request and response bodies are JSON unless the endpoint serves HTML.
@@ -39,7 +37,7 @@ This document summarizes the HTTP API contract implemented by `scripts/lib/relay
 | --- | --- | --- |
 | Health | None | `GET /health`, `GET /healthz` |
 | Desktop | `x-legax-secret` header | Daemon, adapter, relay administration, portable session, artifact, workflow, host, command, audit, and desktop pairing APIs. |
-| Browser device | `legax_device` HttpOnly cookie | Browser event, message, attention, agent list, and logout APIs. |
+| Browser device | `legax_device` HttpOnly cookie | Browser event, message, attention, host list, agent list, and logout APIs. |
 | Telegram webhook | `x-telegram-bot-api-secret-token` when configured | `POST /api/telegram/events` |
 | Feishu/Lark callback | `verificationToken` in the callback body | `POST /api/feishu/events` |
 | TWA launch token | Short-lived token issued by desktop-authenticated daemon flow | `/api/twa/*` project picker APIs |
@@ -51,7 +49,7 @@ This document summarizes the HTTP API contract implemented by `scripts/lib/relay
 | Method and path | Purpose | Notes |
 | --- | --- | --- |
 | `POST /api/events` | Append outbound event to a relay session. | Also fans out through relay-owned transports. |
-| `GET /api/messages` | Poll inbound messages for daemon or adapter routing. | Supports cursor and target filtering. |
+| `GET /api/messages` | Poll inbound messages for daemon or adapter routing. | Supports cursor, agent/task, and `hostId` target filtering. |
 | `POST /api/pairing-codes` | Create a short-lived browser pairing offer. | Desktop secret required. |
 | `GET /api/devices` | List paired browser devices. | Returns public device metadata only. |
 | `DELETE /api/devices/:id` | Revoke a paired browser device. | Does not rotate relay or third-party credentials. |
@@ -63,12 +61,13 @@ This document summarizes the HTTP API contract implemented by `scripts/lib/relay
 | --- | --- |
 | `GET /api/events` | Poll session events after a sequence number. |
 | `POST /api/messages` | Submit text, control messages, approvals, or input responses. |
+| `GET /api/hosts` | Read daemon host records and computed online/offline state for machine switching. |
 | `GET /api/agents` | Read known agent targets for the session. |
 | `GET /api/attention` | Read derived approval, input, error, and completion items. |
 | `POST /api/attention/ack` | Acknowledge attention items for the current paired device. |
 | `POST /api/logout` | Clear the browser device cookie. |
 
-The browser never receives or stores the desktop relay secret.
+Browser-submitted messages can include `targetHostId` and `targetAgentId`; the relay preserves those fields so the daemon and transport callbacks route actions to the selected machine. The browser never receives or stores the desktop relay secret.
 
 ## Pairing And TWA APIs
 
@@ -130,7 +129,7 @@ Workflow definitions cannot contain executable free-form fields. Ready steps bec
 | Method and path | Purpose |
 | --- | --- |
 | `POST /api/hosts` | Register or refresh daemon host metadata and heartbeat. |
-| `GET /api/hosts` | List hosts with computed online/offline status. |
+| `GET /api/hosts` | List hosts with computed online/offline status. Paired browsers can read this endpoint for machine switching; mutation remains desktop-authenticated. |
 | `POST /api/commands` | Create a pending relay command. |
 | `GET /api/commands` | List commands eligible for a host and command-ref allowlist. |
 | `GET /api/commands/:id` | Read and refresh command expiry state. |

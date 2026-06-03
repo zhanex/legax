@@ -9,7 +9,6 @@
 
 [English](RELAY_API.md) | 简体中文
 
-本文档总结 `scripts/lib/relay-server-core.mjs` 实现的 HTTP API 契约。它补充描述可迁移事件和工作流概念的 [Legax 协议](LEGAX_PROTOCOL.zh-CN.md)，以及描述持久记录的 [Relay Store](RELAY_STORE.zh-CN.md)。
 
 ## 约定
 
@@ -39,7 +38,7 @@
 | --- | --- | --- |
 | Health | 无 | `GET /health`、`GET /healthz` |
 | Desktop | `x-legax-secret` header | Daemon、adapter、relay 管理、可迁移 session、artifact、workflow、host、command、audit 和 desktop pairing API。 |
-| Browser device | `legax_device` HttpOnly cookie | 浏览器 event、message、attention、agent list 和 logout API。 |
+| Browser device | `legax_device` HttpOnly cookie | 浏览器 event、message、attention、host list、agent list 和 logout API。 |
 | Telegram webhook | 配置后使用 `x-telegram-bot-api-secret-token` | `POST /api/telegram/events` |
 | Feishu/Lark callback | callback body 中的 `verificationToken` | `POST /api/feishu/events` |
 | TWA launch token | desktop-authenticated daemon 流程颁发的短期 token | `/api/twa/*` 项目选择 API |
@@ -51,7 +50,7 @@
 | 方法和路径 | 目的 | 说明 |
 | --- | --- | --- |
 | `POST /api/events` | 向 relay session 追加出站 event。 | 也会通过 relay-owned transport fan out。 |
-| `GET /api/messages` | 为 daemon 或 adapter 路由轮询入站 message。 | 支持 cursor 和 target 过滤。 |
+| `GET /api/messages` | 为 daemon 或 adapter 路由轮询入站 message。 | 支持 cursor、agent/task 和 `hostId` 目标过滤。 |
 | `POST /api/pairing-codes` | 创建短期浏览器 pairing offer。 | 需要 desktop secret。 |
 | `GET /api/devices` | 列出已配对浏览器设备。 | 只返回公开设备 metadata。 |
 | `DELETE /api/devices/:id` | 撤销已配对浏览器设备。 | 不会轮换 relay 或第三方凭据。 |
@@ -63,10 +62,13 @@
 | --- | --- |
 | `GET /api/events` | 按 sequence 轮询 session event。 |
 | `POST /api/messages` | 提交文本、控制消息、审批或输入响应。 |
+| `GET /api/hosts` | 读取 daemon host 记录和用于机器切换的 online/offline 计算状态。 |
 | `GET /api/agents` | 读取 session 已知 agent target。 |
 | `GET /api/attention` | 读取派生出的审批、输入、错误和完成事项。 |
 | `POST /api/attention/ack` | 为当前已配对设备确认 attention item。 |
 | `POST /api/logout` | 清除浏览器设备 cookie。 |
+
+浏览器提交的 message 可以包含 `targetHostId` 和 `targetAgentId`；relay 会保留这些字段，让 daemon 和 transport callback 把 action 路由到所选机器。浏览器永远不会接收或保存 desktop relay secret。
 
 浏览器永远不会收到或保存 desktop relay secret。
 
@@ -130,7 +132,7 @@ Workflow definition 不能包含自由可执行字段。Ready step 变成 relay 
 | 方法和路径 | 目的 |
 | --- | --- |
 | `POST /api/hosts` | 注册或刷新 daemon host metadata 和 heartbeat。 |
-| `GET /api/hosts` | 列出 host，并带有计算出的 online/offline 状态。 |
+| `GET /api/hosts` | 列出 host，并计算 online/offline 状态。配对浏览器可以读取该 endpoint 用于机器切换；写入仍然需要 desktop auth。 |
 | `POST /api/commands` | 创建 pending relay command。 |
 | `GET /api/commands` | 列出某个 host 和 command-ref allowlist 可执行的 command。 |
 | `GET /api/commands/:id` | 读取并刷新 command expiry 状态。 |

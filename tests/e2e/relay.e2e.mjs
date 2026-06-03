@@ -39,7 +39,7 @@ test("relay entrypoints delegate HTTP behavior to the shared relay core", async 
     assert.doesNotMatch(source, /function createPairingCode\b/, name);
   }
 
-  for (const file of ["relay-server-core.mjs", "yaml.mjs", "paths.mjs", "telegram-transport.mjs", "outbound-transports.mjs", "menu-groups.mjs"]) {
+  for (const file of ["relay-server-core.mjs", "yaml.mjs", "paths.mjs", "telegram-transport.mjs", "outbound-transports.mjs", "menu-groups.mjs", "i18n.mjs", "relay-ui-actions.mjs"]) {
     const source = await fs.readFile(new URL(`../../scripts/lib/${file}`, import.meta.url), "utf8");
     const standaloneCopy = await fs.readFile(new URL(`../../self-hosted-relay/lib/${file}`, import.meta.url), "utf8");
     assert.equal(standaloneCopy, source, `${file} copied into self-hosted relay`);
@@ -1771,11 +1771,15 @@ test("self-hosted relay supports authenticated desktop and phone flows", async (
   assert.match(fragmentHtml, /data-scope="project"/);
   assert.match(fragmentHtml, /data-scope="session"/);
   assert.match(fragmentHtml, /class="context-breadcrumb"/);
-  assert.match(fragmentHtml, /<nav class="context-breadcrumb"[\s\S]*<\/nav>\s*<button id="status"/);
+  assert.match(fragmentHtml, /id="machine-status"/);
+  assert.match(fragmentHtml, /id="machine-picker"/);
+  assert.match(fragmentHtml, /id="language-select"/);
+  assert.match(fragmentHtml, /id="logout-button"/);
   assert.match(fragmentHtml, /supportedAgents/);
   assert.match(fragmentHtml, /Codex CLI/);
   assert.match(fragmentHtml, /Claude Code/);
   assert.match(fragmentHtml, /Gemini CLI/);
+  assert.match(fragmentHtml, /OpenCode/);
   assert.match(fragmentHtml, /Choose project first/);
   assert.doesNotMatch(fragmentHtml, /activateFirstContextForAgent/);
   assert.match(fragmentHtml, /id="offline-help"/);

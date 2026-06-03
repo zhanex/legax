@@ -12,6 +12,7 @@ import {
   telegramUpdateId
 } from "./telegram-transport.mjs";
 import { sendTelegramEvent } from "./outbound-transports.mjs";
+import { browserDictionaryPayload, resolveLocale } from "./i18n.mjs";
 import {
   LPS_ACTION_IDS,
   LPS_TDD_WORKFLOW_ID,
@@ -860,10 +861,12 @@ function normalizeEvent(body, sessionId, seq) {
 
 function normalizeMessage(body, sessionId, seq) {
   const targetAgentId = normalizeAgentId(body.targetAgentId ?? body.agentId ?? body.target);
+  const targetHostId = relayId(body.targetHostId ?? body.hostId ?? body.targetHost, "targetHostId", { required: false });
   return {
     ...body,
     id: body.id ?? crypto.randomUUID(),
     sessionId,
+    targetHostId,
     targetAgentId,
     taskId: body.taskId,
     seq,
@@ -2308,6 +2311,7 @@ function appendSessionMessage(store, requestedSessionId, body) {
     sessionId,
     messageId: message.id,
     messageSeq: message.seq,
+    targetHostId: message.targetHostId,
     targetAgentId: message.targetAgentId,
     action: message.action ?? ""
   });
@@ -2502,13 +2506,16 @@ function rememberTelegramUpdate(state, dedupeId) {
 function updateTelegramSelectionFromMessage(state, message) {
   if (message.type !== "control") return;
   if (message.action === "list_agent_projects") {
+    if (message.targetHostId !== undefined) state.selection.targetHostId = message.targetHostId ?? "";
     state.selection.targetAgentId = message.targetAgentId;
   }
   if (message.action === "list_agent_sessions") {
+    if (message.targetHostId !== undefined) state.selection.targetHostId = message.targetHostId ?? "";
     state.selection.targetAgentId = message.targetAgentId;
     state.selection.selectedProjectRef = message.projectRef ?? "";
   }
   if (message.action === "select_session") {
+    if (message.targetHostId !== undefined) state.selection.targetHostId = message.targetHostId ?? "";
     state.selection.targetAgentId = message.targetAgentId;
     state.selection.selectedThreadId = message.threadRef ?? "";
   }
@@ -2531,6 +2538,9 @@ function processTelegramUpdateInStore(store, transport, update, { sessionId: req
     targetAgentId: telegramDefaultTarget(transport, state),
     pollerAgentId: telegramPollerAgentId(transport)
   });
+  if (messageBody && state.selection?.targetHostId && !messageBody.targetHostId) {
+    messageBody.targetHostId = String(state.selection.targetHostId);
+  }
   if (!messageBody) {
     rememberTelegramUpdate(state, dedupeId);
     return { ignored: true, reason: "unsupported update", callbackId, changed: true };
@@ -2754,11 +2764,13 @@ function feishuIncomingMessage(body, transport) {
     const action = String(value.legaxAction ?? value.action ?? "").toLowerCase();
     const requestId = String(value.requestId ?? value.request_id ?? "");
     const targetAgentId = String(value.targetAgentId ?? value.agentId ?? targetFromRequestId(requestId, fallbackTarget));
+    const targetHostId = String(value.targetHostId ?? value.hostId ?? "");
     if ((action === "approve" || action === "deny") && requestId) {
       return {
         id,
         transport: "feishu",
         type: "permission_decision",
+        targetHostId,
         targetAgentId,
         requestId,
         decision: action,
@@ -2772,6 +2784,7 @@ function feishuIncomingMessage(body, transport) {
         id,
         transport: "feishu",
         type: "user_input_response",
+        targetHostId,
         targetAgentId,
         requestId,
         text: String(value.text ?? value.answer ?? "").trim(),
@@ -2783,7 +2796,10 @@ function feishuIncomingMessage(body, transport) {
   return null;
 }
 
-function messageMatchesTarget(message, agentId, taskId) {
+function messageMatchesTarget(message, agentId, taskId, hostId) {
+  const requestedHostId = String(hostId ?? "").trim();
+  const targetHostId = String(message.targetHostId ?? message.hostId ?? message.targetHost ?? "").trim();
+  if (requestedHostId && targetHostId && targetHostId !== requestedHostId) return false;
   const requestedAgentId = normalizeAgentId(agentId);
   if (!requestedAgentId) return true;
   const targetAgentId = normalizeAgentId(message.targetAgentId ?? message.agentId ?? message.target);
@@ -2980,9 +2996,20 @@ function mobilePage(sessionId) {
       id: String(RAW_CONFIG.gemini?.agentId ?? "gemini-cli"),
       label: String(RAW_CONFIG.gemini?.agentLabel ?? "Gemini CLI"),
       enabled: RAW_CONFIG.gemini?.enabled !== false
+    },
+    {
+      configKey: "opencode",
+      id: String(RAW_CONFIG.opencode?.agentId ?? "opencode"),
+      label: String(RAW_CONFIG.opencode?.agentLabel ?? "OpenCode"),
+      enabled: RAW_CONFIG.opencode?.enabled !== false
     }
   ].filter((agent) => agent.enabled && agent.id);
-  const bootstrap = JSON.stringify({ sessionId, supportedAgents });
+  const bootstrap = JSON.stringify({
+    sessionId,
+    supportedAgents,
+    locale: resolveLocale(RAW_CONFIG),
+    i18n: browserDictionaryPayload()
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3880,30 +3907,325 @@ function mobilePage(sessionId) {
         scroll-behavior: auto !important;
       }
     }
+    :root {
+      color-scheme: light;
+      --bg: #fafafa;
+      --bg-top: #fafafa;
+      --surface: #ffffff;
+      --surface-soft: #f7f7f7;
+      --surface-strong: #f2f2f2;
+      --text: #171717;
+      --muted: #737373;
+      --border: #e5e5e5;
+      --border-strong: #d4d4d4;
+      --accent: #171717;
+      --accent-strong: #000000;
+      --success: #16a34a;
+      --warning: #b45309;
+      --danger: #dc2626;
+      --shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+      --shadow-soft: none;
+      --radius-lg: 8px;
+      --radius-md: 8px;
+      --focus: 0 0 0 3px rgba(23, 23, 23, 0.16);
+      --message-width: 760px;
+      letter-spacing: 0;
+    }
+    body {
+      background: var(--bg);
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    main {
+      width: min(920px, calc(100% - 28px));
+      padding-bottom: calc(132px + env(safe-area-inset-bottom));
+    }
+    .app-bar {
+      gap: 8px;
+      margin: 0 -14px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(250, 250, 250, 0.96);
+      backdrop-filter: blur(12px);
+      box-shadow: none;
+    }
+    .banner-row {
+      align-items: center;
+    }
+    .top-actions {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
+    }
+    .machine-status,
+    .language-select,
+    .ghost-button {
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: none;
+      font-size: 13px;
+    }
+    .machine-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: min(52vw, 360px);
+      padding: 0 10px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+    .machine-status:hover,
+    .machine-status[aria-expanded="true"],
+    .ghost-button:hover {
+      background: var(--surface-soft);
+      border-color: var(--border-strong);
+    }
+    .machine-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .machine-state-text {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .status-dot {
+      flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--danger);
+    }
+    .machine-status[data-state="online"] .status-dot,
+    .machine-row[data-state="online"] .status-dot {
+      background: var(--success);
+    }
+    .machine-status[data-state="offline"] .status-dot,
+    .machine-row[data-state="offline"] .status-dot {
+      background: var(--danger);
+    }
+    .language-select {
+      width: auto;
+      min-width: 118px;
+      padding: 0 8px;
+      appearance: auto;
+    }
+    .ghost-button {
+      padding: 0 10px;
+      cursor: pointer;
+    }
+    .status {
+      min-height: 34px;
+      border-radius: 8px;
+      box-shadow: none;
+      padding: 0 10px;
+      background: transparent;
+    }
+    .status::before {
+      box-shadow: none !important;
+    }
+    .context-breadcrumb {
+      width: 100%;
+      padding-top: 2px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .context-breadcrumb::-webkit-scrollbar {
+      display: none;
+    }
+    .context-segment {
+      min-height: 36px;
+      border-radius: 6px;
+      padding: 0 6px;
+    }
+    .context-segment:hover,
+    .context-segment[aria-expanded="true"] {
+      background: var(--surface-soft);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .segment-value {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .machine-picker {
+      display: grid;
+      gap: 8px;
+      width: min(440px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 8px;
+    }
+    .machine-picker[hidden] {
+      display: none;
+    }
+    .machine-row {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 54px;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text);
+      padding: 8px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .machine-row > span:nth-child(2) {
+      min-width: 0;
+      display: grid;
+    }
+    .machine-row:hover,
+    .machine-row[data-current="true"] {
+      background: var(--surface-soft);
+      border-color: var(--border);
+    }
+    .machine-row[disabled] {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+    .machine-row-main {
+      min-width: 0;
+      font-size: 14px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .machine-row-detail {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .machine-row-status,
+    .machine-empty {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .machine-row-status {
+      justify-self: end;
+      white-space: nowrap;
+    }
+    .machine-empty {
+      padding: 12px;
+      line-height: 1.45;
+    }
+    .attention-panel,
+    .context-switcher,
+    .event,
+    .empty-state,
+    .offline-help,
+    .composer-inner {
+      border-radius: 8px !important;
+      box-shadow: none !important;
+    }
+    .context-switcher {
+      border-color: var(--border);
+      background: var(--surface);
+    }
+    .event {
+      border-color: var(--border);
+      background: var(--surface);
+    }
+    .event-kind {
+      border-radius: 6px;
+    }
+    .composer {
+      background: rgba(250, 250, 250, 0.98);
+      border-top: 1px solid var(--border);
+    }
+    .composer-inner {
+      max-width: 920px;
+      border-color: var(--border);
+      background: var(--surface);
+    }
+    textarea,
+    button,
+    select {
+      letter-spacing: 0;
+    }
+    @media (max-width: 640px) {
+      main {
+        width: calc(100% - 20px);
+      }
+      .app-bar {
+        margin: 0;
+      }
+      .banner-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+      .top-actions {
+        gap: 6px;
+      }
+      .language-select {
+        min-width: 92px;
+      }
+      .status {
+        display: none;
+      }
+      .machine-status {
+        max-width: 100%;
+      }
+      .attention-title {
+        overflow: visible;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+    }
   </style>
 </head>
 <body>
   <main>
     <header class="app-bar">
       <div class="banner-row">
-        <nav class="context-breadcrumb" aria-label="Current conversation">
-          <button id="active-cli-button" class="context-segment" data-scope="cli" type="button" aria-expanded="false" aria-controls="context-switcher">
-            <span class="sr-only">CLI</span>
-            <strong id="active-cli" class="segment-value">Choose target</strong>
-          </button>
-          <span class="crumb-separator" aria-hidden="true">/</span>
-          <button id="active-project-button" class="context-segment" data-scope="project" type="button" aria-expanded="false" aria-controls="context-switcher">
-            <span class="sr-only">Project</span>
-            <span id="active-project" class="segment-value">Project</span>
-          </button>
-          <span class="crumb-separator" aria-hidden="true">/</span>
-          <button id="active-session-button" class="context-segment" data-scope="session" type="button" aria-expanded="false" aria-controls="context-switcher">
-            <span class="sr-only">Session</span>
-            <span id="active-session" class="segment-value">Session</span>
-          </button>
-        </nav>
-        <button id="status" class="status" data-state="busy" data-help="" type="button" aria-expanded="false" aria-controls="offline-help" disabled>Connecting</button>
+        <button id="machine-status" class="machine-status" data-state="offline" type="button" aria-expanded="false" aria-controls="machine-picker" data-testid="machine-status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="machine-label" class="machine-label">Choose machine</span>
+          <span id="machine-state-text" class="machine-state-text">Offline</span>
+        </button>
+        <div class="top-actions">
+          <select id="language-select" class="language-select" aria-label="Language" data-testid="language-select">
+            <option value="en">English</option>
+            <option value="zh-CN">简体中文</option>
+          </select>
+          <button id="logout-button" class="ghost-button" type="button" data-testid="logout-button">Logout</button>
+          <button id="status" class="status" data-state="busy" data-help="" type="button" aria-expanded="false" aria-controls="offline-help" disabled>Connecting</button>
+        </div>
       </div>
+      <nav id="context-breadcrumb" class="context-breadcrumb" aria-label="Current conversation">
+        <button id="active-cli-button" class="context-segment" data-scope="cli" type="button" aria-expanded="false" aria-controls="context-switcher">
+          <span class="sr-only">CLI</span>
+          <strong id="active-cli" class="segment-value">Choose target</strong>
+        </button>
+        <span class="crumb-separator" aria-hidden="true">/</span>
+        <button id="active-project-button" class="context-segment" data-scope="project" type="button" aria-expanded="false" aria-controls="context-switcher">
+          <span class="sr-only">Project</span>
+          <span id="active-project" class="segment-value">Project</span>
+        </button>
+        <span class="crumb-separator" aria-hidden="true">/</span>
+        <button id="active-session-button" class="context-segment" data-scope="session" type="button" aria-expanded="false" aria-controls="context-switcher">
+          <span class="sr-only">Session</span>
+          <span id="active-session" class="segment-value">Session</span>
+        </button>
+      </nav>
+      <div id="machine-picker" class="machine-picker" hidden data-testid="machine-picker"></div>
       <div id="offline-help" class="offline-help" hidden>
         <div class="offline-help-title">Daemon is offline</div>
         <p>Start the local daemon, then confirm the relay settings in config.yaml point to this relay.</p>
@@ -3924,7 +4246,7 @@ function mobilePage(sessionId) {
     <form id="reply-form" class="composer">
       <div class="composer-inner">
         <label class="reply-field">
-          <span class="sr-only">Reply to agent</span>
+          <span id="reply-label" class="sr-only">Reply to agent</span>
           <textarea id="reply" rows="1" placeholder="Reply to agent" aria-label="Reply to agent"></textarea>
         </label>
         <button id="send-button" class="primary" type="submit">Send</button>
@@ -3944,14 +4266,23 @@ function mobilePage(sessionId) {
     const activeCli = document.getElementById("active-cli");
     const activeProject = document.getElementById("active-project");
     const activeSession = document.getElementById("active-session");
+    const contextBreadcrumb = document.getElementById("context-breadcrumb");
     const contextSwitcher = document.getElementById("context-switcher");
     const replyForm = document.getElementById("reply-form");
+    const replyLabel = document.getElementById("reply-label");
     const reply = document.getElementById("reply");
     const sendButton = document.getElementById("send-button");
     const target = document.getElementById("target");
     const offlineHelp = document.getElementById("offline-help");
     const attentionPanel = document.getElementById("attention-panel");
+    const machineStatus = document.getElementById("machine-status");
+    const machineLabel = document.getElementById("machine-label");
+    const machineStateText = document.getElementById("machine-state-text");
+    const machinePicker = document.getElementById("machine-picker");
+    const languageSelect = document.getElementById("language-select");
+    const logoutButton = document.getElementById("logout-button");
     const agents = new Map();
+    const hosts = new Map();
     const contexts = new Map();
     const agentGroups = new Map();
     const projectGroups = new Map();
@@ -3963,11 +4294,220 @@ function mobilePage(sessionId) {
     let activeContextKey = "";
     let selectedProjectKey = "";
     let switcherScope = "session";
+    let selectedHostId = localStorage.getItem("legax_selected_host") || "";
     const DEFAULT_AGENT = "";
+    const i18nPayload = BOOTSTRAP.i18n || {};
+    const dictionaries = i18nPayload.dictionaries || {};
+    const supportedLocales = Array.isArray(i18nPayload.supportedLocales) ? i18nPayload.supportedLocales : ["en", "zh-CN"];
+    let locale = resolveBrowserLocale();
+
+    function normalizeLocale(value, fallback = "en") {
+      const text = String(value || "").trim();
+      if (!text || text.toLowerCase() === "auto") return fallback;
+      const lower = text.toLowerCase().replace("_", "-");
+      if (lower === "zh" || lower.startsWith("zh-cn") || lower.startsWith("zh-hans")) return "zh-CN";
+      if (lower.startsWith("en")) return "en";
+      return fallback;
+    }
+
+    function resolveBrowserLocale() {
+      const stored = normalizeLocale(localStorage.getItem("legax_locale"), "");
+      if (stored) return stored;
+      const configured = String(BOOTSTRAP.locale || "auto");
+      if (configured.toLowerCase() !== "auto") return normalizeLocale(configured, "en");
+      for (const value of navigator.languages || [navigator.language]) {
+        const normalized = normalizeLocale(value, "");
+        if (normalized) return normalized;
+      }
+      return "en";
+    }
+
+    function t(key, values = {}) {
+      const template = (dictionaries[locale] && dictionaries[locale][key]) || (dictionaries.en && dictionaries.en[key]) || key;
+      return String(template).replace(/\{([A-Za-z0-9_.-]+)\}/g, (match, name) => (
+        Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
+      ));
+    }
 
     function qs(params) {
       const search = new URLSearchParams(params);
       return search.toString();
+    }
+
+    function applyI18n() {
+      document.documentElement.lang = locale;
+      languageSelect.value = supportedLocales.includes(locale) ? locale : "en";
+      languageSelect.setAttribute("aria-label", t("language.label"));
+      contextBreadcrumb.setAttribute("aria-label", t("relay.currentConversation"));
+      activeProjectButton.querySelector(".sr-only").textContent = t("relay.project");
+      activeSessionButton.querySelector(".sr-only").textContent = t("relay.session");
+      activeCliButton.querySelector(".sr-only").textContent = "CLI";
+      replyLabel.textContent = t("relay.replyPlaceholder");
+      reply.placeholder = t("relay.replyPlaceholder");
+      reply.setAttribute("aria-label", t("relay.replyPlaceholder"));
+      sendButton.textContent = t("common.send");
+      logoutButton.textContent = t("common.logout");
+      emptyState.textContent = t("relay.waiting");
+      updateMachineStatus();
+      updateActiveContextDisplay();
+      renderContextSwitcher();
+      renderMachinePicker();
+    }
+
+    function secondsAgo(value) {
+      const then = Date.parse(String(value || ""));
+      if (!Number.isFinite(then)) return "";
+      const diff = Math.max(0, Math.floor((Date.now() - then) / 1000));
+      if (diff < 60) return diff + "s ago";
+      const minutes = Math.floor(diff / 60);
+      if (minutes < 60) return minutes + "m ago";
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + "h ago";
+      return Math.floor(hours / 24) + "d ago";
+    }
+
+    function hostDisplayStatus(host) {
+      const id = String(host?.id || "").trim();
+      const label = String(host?.displayName || id || t("machine.unselected")).trim();
+      const status = String(host?.status || "offline").toLowerCase();
+      const online = status === "online";
+      const platform = [host?.capabilities?.platform, host?.capabilities?.arch].filter(Boolean).join("/");
+      const groups = Array.isArray(host?.groups) ? host.groups.filter(Boolean).join(", ") : "";
+      const seen = secondsAgo(host?.lastSeenAt || host?.updatedAt);
+      return {
+        id,
+        label,
+        status,
+        online,
+        statusLabel: online ? t("common.online") : t("common.offline"),
+        cliCount: Array.isArray(host?.adapters) ? host.adapters.length : 0,
+        detail: [id, platform, groups, seen ? "seen " + seen : ""].filter(Boolean).join(" · ")
+      };
+    }
+
+    function currentHost() {
+      return selectedHostId ? hosts.get(selectedHostId) : null;
+    }
+
+    function currentHostOnline() {
+      return hostDisplayStatus(currentHost()).online;
+    }
+
+    function setMachinePickerOpen(open) {
+      machinePicker.hidden = !open;
+      machineStatus.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        setOfflineHelpOpen(false);
+        setSwitcherOpen(false);
+        renderMachinePicker();
+      }
+    }
+
+    function setSelectedHost(hostId) {
+      selectedHostId = String(hostId || "").trim();
+      if (selectedHostId) localStorage.setItem("legax_selected_host", selectedHostId);
+      else localStorage.removeItem("legax_selected_host");
+      target.value = "";
+      activeContextKey = "";
+      selectedProjectKey = "";
+      refreshAgentCatalogFromHost();
+      syncControls();
+      updateMachineStatus();
+      renderContextSwitcher();
+    }
+
+    function refreshAgentCatalogFromHost() {
+      agents.clear();
+      const host = currentHost();
+      const adapters = Array.isArray(host?.adapters) ? host.adapters : [];
+      for (const adapter of adapters) {
+        const id = String(adapter.agentId || adapter.id || adapter.name || "").trim();
+        if (id) agents.set(id, adapter.agentLabel || adapter.label || id);
+      }
+      if (agents.size === 0 && !selectedHostId) {
+        for (const agent of supportedAgents) {
+          if (agent && agent.id) agents.set(agent.id, agent.label || agent.id);
+        }
+      }
+    }
+
+    function updateMachineStatus() {
+      const host = currentHost();
+      const info = hostDisplayStatus(host);
+      machineLabel.textContent = host ? info.label : t("machine.unselected");
+      machineStateText.textContent = host ? info.statusLabel : t("common.offline");
+      machineStatus.dataset.state = host && info.online ? "online" : "offline";
+      machineStatus.setAttribute("aria-label", (host ? info.label : t("machine.unselected")) + " · " + (host ? info.statusLabel : t("common.offline")));
+    }
+
+    function renderMachinePicker() {
+      machinePicker.replaceChildren();
+      const list = [...hosts.values()].sort((left, right) => String(left.displayName || left.id).localeCompare(String(right.displayName || right.id)));
+      if (!list.length) {
+        const empty = document.createElement("div");
+        empty.className = "machine-empty";
+        empty.textContent = t("machine.none") + ". ";
+        const refresh = document.createElement("button");
+        refresh.type = "button";
+        refresh.className = "ghost-button";
+        refresh.textContent = t("machine.refresh");
+        refresh.addEventListener("click", refreshHosts);
+        empty.append(refresh);
+        machinePicker.append(empty);
+        return;
+      }
+      for (const host of list) {
+        const info = hostDisplayStatus(host);
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "machine-row";
+        row.dataset.state = info.online ? "online" : "offline";
+        row.dataset.current = host.id === selectedHostId ? "true" : "false";
+        row.disabled = !info.online;
+        row.setAttribute("aria-label", [info.label, info.statusLabel, info.cliCount + " CLI", info.detail].filter(Boolean).join(" · "));
+        const dot = document.createElement("span");
+        dot.className = "status-dot";
+        const body = document.createElement("span");
+        const title = document.createElement("span");
+        title.className = "machine-row-main";
+        title.textContent = info.label;
+        const detail = document.createElement("span");
+        detail.className = "machine-row-detail";
+        detail.textContent = info.detail;
+        body.append(title, detail);
+        const status = document.createElement("span");
+        status.className = "machine-row-status";
+        status.textContent = (host.id === selectedHostId ? "✓ " : "") + info.statusLabel + " · " + info.cliCount + " CLI";
+        row.append(dot, body, status);
+        row.addEventListener("click", () => {
+          if (!info.online) {
+            setStatus(t("machine.offline"), "offline");
+            return;
+          }
+          setSelectedHost(host.id);
+          setMachinePickerOpen(false);
+        });
+        machinePicker.append(row);
+      }
+    }
+
+    async function refreshHosts() {
+      const response = await fetch("/api/hosts", { headers: authHeaders() });
+      if (response.status === 401) return;
+      if (!response.ok) throw new Error(await response.text());
+      const data = await response.json();
+      hosts.clear();
+      for (const host of data.hosts || []) {
+        if (host && host.id) hosts.set(host.id, host);
+      }
+      if (!selectedHostId || !hosts.has(selectedHostId) || !hostDisplayStatus(hosts.get(selectedHostId)).online) {
+        const firstOnline = [...hosts.values()].find((host) => hostDisplayStatus(host).online);
+        if (firstOnline) selectedHostId = firstOnline.id;
+      }
+      refreshAgentCatalogFromHost();
+      updateMachineStatus();
+      renderMachinePicker();
+      syncControls();
     }
 
     function authHeaders(extra = {}) {
@@ -3975,7 +4515,26 @@ function mobilePage(sessionId) {
     }
 
     function setStatus(text, state = "connected") {
-      statusEl.textContent = text;
+      const statusKeys = {
+        "Action failed": "relay.actionFailed",
+        "Action sent": "relay.actionSent",
+        "Approved": "relay.approved",
+        "Auth required": "relay.authRequired",
+        "Choose target": "relay.chooseTarget",
+        "CLI list requested": "relay.refreshCli",
+        "Connected": "relay.connected",
+        "Connecting": "relay.connecting",
+        "Denied": "relay.denied",
+        "Load sessions": "relay.loadSessions",
+        "New session requested": "relay.newSession",
+        "Offline": "common.offline",
+        "Sent": "relay.sent",
+        "Send failed": "relay.actionFailed",
+        "Session selected": "relay.session",
+        "Sessions requested": "relay.refreshSessions",
+        "Updated": "relay.updated"
+      };
+      statusEl.textContent = statusKeys[text] ? t(statusKeys[text]) : text;
       statusEl.dataset.state = state;
       const canShowOfflineHelp = state === "offline" && text === "Offline";
       statusEl.dataset.help = canShowOfflineHelp ? "available" : "";
@@ -3993,7 +4552,7 @@ function mobilePage(sessionId) {
     }
 
     function syncControls() {
-      const hasTarget = Boolean(target.value);
+      const hasTarget = Boolean(selectedHostId && target.value && currentHostOnline());
       reply.disabled = !hasTarget;
       sendButton.disabled = !hasTarget;
       updateActiveContextDisplay();
@@ -4211,13 +4770,22 @@ function mobilePage(sessionId) {
     }
 
     function agentLabelById(agentId) {
-      return agents.get(agentId) || agentId || "Choose target";
+      return agents.get(agentId) || agentId || t("relay.chooseTarget");
     }
 
     function updateActiveContextDisplay() {
       const agentId = activeAgentId();
       const context = activeContextRecord();
       const selectedProject = selectedProjectRecord();
+      if (!selectedHostId) {
+        activeCli.textContent = t("relay.chooseMachineFirst");
+        activeProject.textContent = t("relay.project");
+        activeSession.textContent = t("relay.session");
+        activeProject.title = "";
+        activeSession.title = "";
+        setActiveGroup();
+        return;
+      }
       if (context && context.agent.id === agentId && (!selectedProjectKey || projectKey(context) === selectedProjectKey)) {
         activeCli.textContent = context.agent.label;
         activeProject.textContent = context.project.label;
@@ -4226,14 +4794,14 @@ function mobilePage(sessionId) {
         activeSession.title = context.session.ref || context.session.label;
       } else if (agentId) {
         activeCli.textContent = agentLabelById(agentId);
-        activeProject.textContent = selectedProject ? selectedProject.project.label : "Project";
+        activeProject.textContent = selectedProject ? selectedProject.project.label : t("relay.project");
         activeProject.title = selectedProject ? (selectedProject.project.detail || selectedProject.project.label) : "";
-        activeSession.textContent = "Session";
+        activeSession.textContent = t("relay.session");
         activeSession.title = "";
       } else {
-        activeCli.textContent = "Choose target";
-        activeProject.textContent = "Project";
-        activeSession.textContent = "Session";
+        activeCli.textContent = t("relay.chooseTarget");
+        activeProject.textContent = t("relay.project");
+        activeSession.textContent = t("relay.session");
         activeProject.title = "";
         activeSession.title = "";
       }
@@ -4300,6 +4868,7 @@ function mobilePage(sessionId) {
     }
 
     function activeAgentId() {
+      if (!selectedHostId) return "";
       const context = activeContextRecord();
       return target.value || context?.agent.id || DEFAULT_AGENT;
     }
@@ -4368,6 +4937,14 @@ function mobilePage(sessionId) {
 
     function renderContextSwitcher() {
       contextSwitcher.replaceChildren();
+      if (!selectedHostId) {
+        const empty = document.createElement("div");
+        empty.className = "context-empty";
+        empty.textContent = t("relay.chooseMachineFirst");
+        contextSwitcher.append(empty);
+        appendSwitcherAction(t("machine.refresh"), "", refreshHosts);
+        return;
+      }
       const sorted = sortedContexts();
       if (switcherScope === "cli") {
         for (const [id, label] of [...agents.entries()].sort((left, right) => left[1].localeCompare(right[1]))) {
@@ -4384,10 +4961,10 @@ function mobilePage(sessionId) {
           });
           button.dataset.active = target.value === id ? "true" : "false";
           button.children[1].textContent = latest ? latest.project.label : "Not started";
-          button.children[2].textContent = latest ? latest.session.label : "Load sessions";
+          button.children[2].textContent = latest ? latest.session.label : t("relay.loadSessions");
           contextSwitcher.append(button);
         }
-        appendSwitcherAction("Refresh CLI list", "Ask daemon for adapters", async () => {
+        appendSwitcherAction(t("relay.refreshCli"), "Ask daemon for adapters", async () => {
           await postMessage({ type: "control", action: "list_agents", text: "/start" });
           setStatus("CLI list requested", "busy");
         });
@@ -4405,7 +4982,7 @@ function mobilePage(sessionId) {
         if (!projects.size) {
           const empty = document.createElement("div");
           empty.className = "context-empty";
-          empty.textContent = agentId ? "No project context yet" : "Choose CLI first";
+          empty.textContent = agentId ? t("relay.noProject") : t("relay.chooseCliFirst");
           contextSwitcher.append(empty);
         }
         for (const context of projects.values()) {
@@ -4414,7 +4991,7 @@ function mobilePage(sessionId) {
           contextSwitcher.append(button);
         }
         if (agentId) {
-          appendSwitcherAction("Load sessions", agentId, async () => {
+          appendSwitcherAction(t("relay.loadSessions"), agentId, async () => {
             await requestSessionsForAgent(agentId);
           });
         }
@@ -4429,7 +5006,7 @@ function mobilePage(sessionId) {
       if (!sessions.length) {
         const empty = document.createElement("div");
         empty.className = "context-empty";
-        empty.textContent = projectId ? "No session context yet" : "Choose project first";
+        empty.textContent = projectId ? t("relay.noSession") : "Choose project first";
         contextSwitcher.append(empty);
       }
       for (const context of sessions) {
@@ -4437,11 +5014,11 @@ function mobilePage(sessionId) {
       }
       const targetAgentId = agentId || DEFAULT_AGENT;
       if (targetAgentId) {
-        appendSwitcherAction("Refresh sessions", targetAgentId, async () => {
+        appendSwitcherAction(t("relay.refreshSessions"), targetAgentId, async () => {
           await postMessage({ targetAgentId, type: "control", action: "list_agent_sessions", selectedAgentId: targetAgentId, text: "/sessions " + targetAgentId });
           setStatus("Sessions requested", "busy");
         });
-        appendSwitcherAction("New session", targetAgentId, async () => {
+        appendSwitcherAction(t("relay.newSession"), targetAgentId, async () => {
           await postMessage({ targetAgentId, type: "control", action: "new_session", selectedAgentId: targetAgentId, text: "/new " + targetAgentId });
           setStatus("New session requested", "busy");
         });
@@ -4449,10 +5026,10 @@ function mobilePage(sessionId) {
     }
 
     function eventKindLabel(event) {
-      if (event.kind === "permission_request") return "Approval";
-      if (event.kind === "user_input_request") return "Input";
-      if (event.kind === "status") return "Status";
-      return "Message";
+      if (event.kind === "permission_request") return t("relay.approval");
+      if (event.kind === "user_input_request") return t("relay.input");
+      if (event.kind === "status") return t("relay.status");
+      return t("relay.message");
     }
 
     function eventKindClass(event) {
@@ -4500,7 +5077,7 @@ function mobilePage(sessionId) {
       target.replaceChildren();
       const empty = document.createElement("option");
       empty.value = "";
-      empty.textContent = agents.size ? "Choose target" : "No target";
+      empty.textContent = agents.size ? t("relay.chooseTarget") : t("relay.noTarget");
       target.append(empty);
       for (const [id, label] of [...agents.entries()].sort((left, right) => left[1].localeCompare(right[1]))) {
         const option = document.createElement("option");
@@ -4764,6 +5341,69 @@ function mobilePage(sessionId) {
     }
 
     function callbackDataToMessage(data) {
+      const decodePart = (value) => {
+        try { return decodeURIComponent(value); } catch { return value; }
+      };
+      const hostAgent = data.match(/^legax:h:([^:]+):agent:([^:]+)$/);
+      if (hostAgent) {
+        const hostId = decodePart(hostAgent[1]);
+        const agentId = decodePart(hostAgent[2]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "list_agent_projects", selectedAgentId: agentId, text: "/projects " + agentId };
+      }
+      const hostProjects = data.match(/^legax:h:([^:]+):projects:([^:]+)(?::(\\d+))?$/);
+      if (hostProjects) {
+        const hostId = decodePart(hostProjects[1]);
+        const agentId = decodePart(hostProjects[2]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "list_agent_projects", selectedAgentId: agentId, page: hostProjects[3] ? Number(hostProjects[3]) : undefined, text: "/projects " + agentId };
+      }
+      const hostSessions = data.match(/^legax:h:([^:]+):sessions:([^:]+)$/);
+      if (hostSessions) {
+        const hostId = decodePart(hostSessions[1]);
+        const agentId = decodePart(hostSessions[2]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "list_agent_sessions", selectedAgentId: agentId, text: "/sessions " + agentId };
+      }
+      const hostSession = data.match(/^legax:h:([^:]+):session:([^:]+):(.+)$/);
+      if (hostSession) {
+        const hostId = decodePart(hostSession[1]);
+        const agentId = decodePart(hostSession[2]);
+        const threadRef = decodePart(hostSession[3]);
+        setSelectedHost(hostId);
+        target.value = agentId;
+        syncControls();
+        activateContextByThread(agentId, threadRef);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "select_session", selectedAgentId: agentId, threadRef, text: "/use " + agentId + " " + threadRef };
+      }
+      const hostProject = data.match(/^legax:h:([^:]+):(project|chat):([^:]+):([^:]+)(?::(\\d+))?$/);
+      if (hostProject) {
+        const hostId = decodePart(hostProject[1]);
+        const agentId = decodePart(hostProject[3]);
+        const projectRef = decodePart(hostProject[4]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "list_agent_sessions", selectedAgentId: agentId, projectRef, page: hostProject[5] ? Number(hostProject[5]) : undefined, text: "/sessions " + agentId + " " + projectRef };
+      }
+      const hostNew = data.match(/^legax:h:([^:]+):new:([^:]+)$/);
+      if (hostNew) {
+        const hostId = decodePart(hostNew[1]);
+        const agentId = decodePart(hostNew[2]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: agentId, type: "control", action: "new_session", selectedAgentId: agentId, text: "/new " + agentId };
+      }
+      const hostNewProject = data.match(/^legax:h:([^:]+):new-project:([^:]+)$/);
+      if (hostNewProject) {
+        const hostId = decodePart(hostNewProject[1]);
+        const agentId = decodePart(hostNewProject[2]);
+        setSelectedHost(hostId);
+        selectAgent(agentId, true);
+        return { targetHostId: hostId, targetAgentId: "legax-daemon", type: "control", action: "new_project_preflight", selectedAgentId: agentId, text: "/new-project " + agentId };
+      }
       if (data === "legax:agents") {
         return { type: "control", action: "list_agents", text: "/start" };
       }
@@ -4779,13 +5419,13 @@ function mobilePage(sessionId) {
         selectAgent(agentId, true);
         return { targetAgentId: agentId, type: "control", action: "list_agent_projects", selectedAgentId: agentId, text: "/projects " + agentId };
       }
-      const pagedProjects = data.match(/^legax:projects:([^:]+):(\d+)$/);
+      const pagedProjects = data.match(/^legax:projects:([^:]+):(\\d+)$/);
       if (pagedProjects) {
         const agentId = decodeURIComponent(pagedProjects[1]);
         selectAgent(agentId, true);
         return { targetAgentId: agentId, type: "control", action: "list_agent_projects", selectedAgentId: agentId, page: Number(pagedProjects[2]), text: "/projects " + agentId };
       }
-      const project = data.match(/^legax:(?:project|chat):([^:]+):([^:]+)(?::(\d+))?$/);
+      const project = data.match(/^legax:(?:project|chat):([^:]+):([^:]+)(?::(\\d+))?$/);
       if (project) {
         const agentId = decodeURIComponent(project[1]);
         const projectRef = decodeURIComponent(project[2]);
@@ -4836,10 +5476,12 @@ function mobilePage(sessionId) {
     }
 
     async function postMessage(message) {
+      const payload = { ...message };
+      if (selectedHostId && !payload.targetHostId) payload.targetHostId = selectedHostId;
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: authHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ sessionId: BOOTSTRAP.sessionId, ...message })
+        body: JSON.stringify({ sessionId: BOOTSTRAP.sessionId, ...payload })
       });
       if (!response.ok) throw new Error(await response.text());
       return response.json();
@@ -4848,7 +5490,10 @@ function mobilePage(sessionId) {
     function targetMessageFields(fallbackEvent) {
       const fallback = fallbackEvent ? agentInfo(fallbackEvent) : null;
       const targetAgentId = fallback?.id || target.value;
-      return targetAgentId ? { targetAgentId } : {};
+      return {
+        ...(selectedHostId ? { targetHostId: selectedHostId } : {}),
+        ...(targetAgentId ? { targetAgentId } : {})
+      };
     }
 
     async function decision(event, value) {
@@ -4863,8 +5508,8 @@ function mobilePage(sessionId) {
     }
 
     function attentionTypeLabel(type) {
-      if (type === "approval") return "Approval";
-      if (type === "input") return "Input";
+      if (type === "approval") return t("relay.approval");
+      if (type === "input") return t("relay.input");
       if (type === "error") return "Error";
       if (type === "completion") return "Completion";
       return "Attention";
@@ -4894,7 +5539,7 @@ function mobilePage(sessionId) {
       title.textContent = data.activeContext?.sessionName || "Attention";
       const count = document.createElement("span");
       count.className = "attention-count";
-      count.textContent = items.length + " pending";
+      count.textContent = t("relay.pending", { count: items.length });
       heading.append(title, count);
       attentionPanel.append(heading);
       for (const item of items.slice(0, 5)) {
@@ -4910,7 +5555,7 @@ function mobilePage(sessionId) {
         body.append(itemTitle, meta);
         const ack = document.createElement("button");
         ack.type = "button";
-        ack.textContent = "Done";
+        ack.textContent = t("common.done");
         ack.addEventListener("click", () => {
           ack.disabled = true;
           ackAttention(item.id).catch(() => {
@@ -4949,6 +5594,7 @@ function mobilePage(sessionId) {
           after = Math.max(after, Number(event.seq) || after);
           renderEvent(event);
         }
+        await refreshHosts();
         await refreshAttention();
         setStatus(data.events && data.events.length ? "Updated" : "Connected", data.events && data.events.length ? "busy" : "connected");
       } catch (error) {
@@ -4962,15 +5608,15 @@ function mobilePage(sessionId) {
       event.preventDefault();
       const text = reply.value.trim();
       if (!text) return;
-      if (!target.value) {
-        setStatus("Choose target", "offline");
+      if (!selectedHostId || !target.value || !currentHostOnline()) {
+        setStatus(selectedHostId ? "Choose target" : t("relay.chooseMachineFirst"), "offline");
         return;
       }
       reply.value = "";
       autoSizeReply();
       sendButton.disabled = true;
       try {
-        await postMessage({ type: "text", text, targetAgentId: target.value });
+        await postMessage({ type: "text", text, targetHostId: selectedHostId, targetAgentId: target.value });
         setStatus("Sent", "success");
       } catch (error) {
         reply.value = text;
@@ -4998,12 +5644,33 @@ function mobilePage(sessionId) {
       if (statusEl.dataset.help !== "available") return;
       event.stopPropagation();
       setSwitcherOpen(false);
+      setMachinePickerOpen(false);
       setOfflineHelpOpen(offlineHelp.hidden);
+    });
+
+    machineStatus.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setMachinePickerOpen(machinePicker.hidden);
+      if (!machinePicker.hidden) refreshHosts().catch(() => setStatus("Offline", "offline"));
+    });
+
+    languageSelect.addEventListener("change", () => {
+      locale = normalizeLocale(languageSelect.value, "en");
+      localStorage.setItem("legax_locale", locale);
+      applyI18n();
+    });
+
+    logoutButton.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST", headers: authHeaders() }).catch(() => null);
+      window.location.reload();
     });
 
     document.addEventListener("click", (event) => {
       if (!offlineHelp.hidden && !statusEl.contains(event.target) && !offlineHelp.contains(event.target)) {
         setOfflineHelpOpen(false);
+      }
+      if (!machinePicker.hidden && !machineStatus.contains(event.target) && !machinePicker.contains(event.target)) {
+        setMachinePickerOpen(false);
       }
       if (!contextSwitcher.hidden && !contextButtons.some((button) => button.contains(event.target)) && !contextSwitcher.contains(event.target)) {
         setSwitcherOpen(false);
@@ -5014,6 +5681,7 @@ function mobilePage(sessionId) {
       if (event.key !== "Escape") return;
       setSwitcherOpen(false);
       setOfflineHelpOpen(false);
+      setMachinePickerOpen(false);
     });
 
     target.addEventListener("change", () => {
@@ -5026,9 +5694,11 @@ function mobilePage(sessionId) {
     });
     reply.addEventListener("input", autoSizeReply);
     autoSizeReply();
+    applyI18n();
     refreshTargets();
     renderContextSwitcher();
     syncControls();
+    refreshHosts().catch(() => setStatus("Offline", "offline"));
     poll();
   </script>
 </body>
@@ -5036,6 +5706,10 @@ function mobilePage(sessionId) {
 }
 
 function pairPage() {
+  const bootstrap = JSON.stringify({
+    locale: resolveLocale(RAW_CONFIG),
+    i18n: browserDictionaryPayload()
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -5044,15 +5718,15 @@ function pairPage() {
   <title>Legax Relay Pairing</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #eef2f7;
+      color-scheme: light;
+      --bg: #fafafa;
       --surface: #ffffff;
-      --text: #111827;
-      --muted: #667085;
-      --border: #d7dee8;
-      --accent: #2563eb;
-      --danger: #b91c1c;
-      --shadow: 0 18px 44px rgba(31, 41, 55, 0.12);
+      --text: #171717;
+      --muted: #737373;
+      --border: #e5e5e5;
+      --accent: #171717;
+      --danger: #dc2626;
+      --shadow: none;
     }
     * { box-sizing: border-box; }
     body {
@@ -5068,7 +5742,7 @@ function pairPage() {
     main {
       width: min(420px, 100%);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 8px;
       background: var(--surface);
       box-shadow: var(--shadow);
       padding: 22px;
@@ -5091,7 +5765,7 @@ function pairPage() {
       width: 100%;
       min-height: 48px;
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 8px;
       padding: 0 14px;
       font: inherit;
       letter-spacing: 0;
@@ -5103,7 +5777,7 @@ function pairPage() {
       min-height: 48px;
       margin-top: 12px;
       border: 1px solid var(--accent);
-      border-radius: 10px;
+      border-radius: 8px;
       background: var(--accent);
       color: white;
       font: inherit;
@@ -5117,36 +5791,81 @@ function pairPage() {
       font-size: 14px;
     }
     .status[data-state="error"] { color: var(--danger); }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f131a;
-        --surface: #181f2a;
-        --text: #f8fafc;
-        --muted: #a9b4c5;
-        --border: #2d3848;
-        --shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
-      }
+    .pair-top {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 14px;
+    }
+    select {
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 0 8px;
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>Pair this browser</h1>
-    <p>Run <code>npm run daemon:pair</code> on the desktop, then enter the one-time pairing code shown there.</p>
+    <div class="pair-top">
+      <select id="language-select" aria-label="Language">
+        <option value="en">English</option>
+        <option value="zh-CN">简体中文</option>
+      </select>
+    </div>
+    <h1 id="pair-title">Pair this browser</h1>
+    <p id="pair-help">Run <code>npm run daemon:pair</code> on the desktop, then enter the one-time pairing code shown there.</p>
     <form id="pair-form">
-      <label>
+      <label id="pair-code-label">
         Pairing code
         <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="\\d{6,8}" required autofocus>
       </label>
-      <button type="submit">Pair browser</button>
+      <button id="pair-button" type="submit">Pair browser</button>
       <div id="status" class="status" aria-live="polite"></div>
     </form>
   </main>
   <script>
+    const BOOTSTRAP = ${bootstrap};
     const hashCode = new URLSearchParams(window.location.hash.slice(1)).get("pair") || "";
     const codeInput = document.getElementById("code");
     const statusEl = document.getElementById("status");
+    const languageSelect = document.getElementById("language-select");
     let pairingOffer = null;
+    const dictionaries = BOOTSTRAP.i18n?.dictionaries || {};
+    let locale = resolveLocale();
+    function normalizeLocale(value, fallback = "en") {
+      const text = String(value || "").trim();
+      if (!text || text.toLowerCase() === "auto") return fallback;
+      const lower = text.toLowerCase().replace("_", "-");
+      if (lower === "zh" || lower.startsWith("zh-cn") || lower.startsWith("zh-hans")) return "zh-CN";
+      if (lower.startsWith("en")) return "en";
+      return fallback;
+    }
+    function resolveLocale() {
+      const stored = normalizeLocale(localStorage.getItem("legax_locale"), "");
+      if (stored) return stored;
+      const configured = String(BOOTSTRAP.locale || "auto");
+      if (configured.toLowerCase() !== "auto") return normalizeLocale(configured, "en");
+      for (const value of navigator.languages || [navigator.language]) {
+        const normalized = normalizeLocale(value, "");
+        if (normalized) return normalized;
+      }
+      return "en";
+    }
+    function t(key) {
+      return dictionaries[locale]?.[key] || dictionaries.en?.[key] || key;
+    }
+    function applyI18n() {
+      document.documentElement.lang = locale;
+      languageSelect.value = locale;
+      languageSelect.setAttribute("aria-label", t("language.label"));
+      document.getElementById("pair-title").textContent = t("pair.title");
+      document.getElementById("pair-help").innerHTML = t("pair.help").replace("npm run daemon:pair", "<code>npm run daemon:pair</code>");
+      document.getElementById("pair-code-label").firstChild.textContent = t("pair.code") + " ";
+      document.getElementById("pair-button").textContent = t("pair.button");
+    }
     function parsePairPayload(value) {
       if (/^\\d{6,8}$/.test(value)) return { code: value };
       const parts = value.split(".");
@@ -5191,7 +5910,7 @@ function pairPage() {
     document.getElementById("pair-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       statusEl.dataset.state = "";
-      statusEl.textContent = "Pairing...";
+      statusEl.textContent = t("pair.status");
       try {
         const response = await fetch("/api/pair", {
           method: "POST",
@@ -5207,9 +5926,15 @@ function pairPage() {
         window.location.assign("/");
       } catch {
         statusEl.dataset.state = "error";
-        statusEl.textContent = "Pairing failed. Check the code and try again.";
+        statusEl.textContent = t("pair.error");
       }
     });
+    languageSelect.addEventListener("change", () => {
+      locale = normalizeLocale(languageSelect.value, "en");
+      localStorage.setItem("legax_locale", locale);
+      applyI18n();
+    });
+    applyI18n();
   </script>
 </body>
 </html>`;
@@ -5321,6 +6046,10 @@ function normalizeTwaRelativePath(value, label = "relativePath") {
 }
 
 function twaNewProjectPage() {
+  const bootstrap = JSON.stringify({
+    locale: resolveLocale(RAW_CONFIG),
+    i18n: browserDictionaryPayload()
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -5328,33 +6057,47 @@ function twaNewProjectPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open project</title>
   <style>
-    :root { color-scheme: light dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; padding: 18px; background: Canvas; color: CanvasText; }
-    header { margin-bottom: 16px; }
+    :root { color-scheme: light; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --bg:#fafafa; --surface:#fff; --text:#171717; --muted:#737373; --border:#e5e5e5; --accent:#171717; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; background: var(--bg); color: var(--text); }
+    main { width: min(720px, 100%); margin: 0 auto; }
+    header { margin-bottom: 16px; display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
     h1 { margin: 0 0 4px; font-size: 20px; line-height: 1.2; }
-    .muted { color: color-mix(in srgb, CanvasText 62%, Canvas); font-size: 13px; }
-    .panel { border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas); border-radius: 8px; overflow: hidden; }
-    button { width: 100%; min-height: 44px; border: 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas); background: transparent; color: inherit; text-align: left; padding: 12px 14px; font: inherit; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .panel { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+    button { width: 100%; min-height: 44px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: inherit; text-align: left; padding: 12px 14px; font: inherit; }
     button:last-child { border-bottom: 0; }
-    .primary { margin-top: 16px; border-radius: 8px; background: #1677ff; color: #fff; text-align: center; font-weight: 650; }
+    button:hover:not(:disabled) { background: #f7f7f7; }
+    button:focus-visible, select:focus-visible { outline: 3px solid rgba(23,23,23,.16); outline-offset: 1px; }
+    .primary { margin-top: 16px; border-radius: 8px; border:1px solid var(--accent); background: var(--accent); color: #fff; text-align: center; font-weight: 650; }
     .toolbar { display: flex; gap: 8px; margin: 12px 0; }
-    .toolbar button { width: auto; border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas); border-radius: 8px; }
+    .toolbar button { width: auto; border: 1px solid var(--border); border-radius: 8px; }
     #roots { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    #roots button { width: auto; border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas); border-radius: 8px; }
+    #roots button { width: auto; border: 1px solid var(--border); border-radius: 8px; }
     #status { margin: 12px 0; white-space: pre-wrap; }
+    select { min-height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 0 8px; font: 13px/1.4 inherit; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Open project</h1>
-    <div id="context" class="muted">Loading...</div>
-  </header>
-  <div class="toolbar"><button id="up" type="button">Back</button><button id="retry" type="button">Retry</button></div>
-  <div id="roots"></div>
-  <div id="status" class="muted"></div>
-  <div id="list" class="panel"></div>
-  <button id="open" class="primary" type="button" disabled>Open this folder</button>
+  <main>
+    <header>
+      <div>
+        <h1 id="title">Open project</h1>
+        <div id="context" class="muted">Loading...</div>
+      </div>
+      <select id="language-select" aria-label="Language">
+        <option value="en">English</option>
+        <option value="zh-CN">简体中文</option>
+      </select>
+    </header>
+    <div class="toolbar"><button id="up" type="button">Back</button><button id="retry" type="button">Retry</button></div>
+    <div id="roots"></div>
+    <div id="status" class="muted"></div>
+    <div id="list" class="panel"></div>
+    <button id="open" class="primary" type="button" disabled>Open this folder</button>
+  </main>
   <script>
+    const BOOTSTRAP = ${bootstrap};
     const token = new URLSearchParams(location.search).get("token") || "";
     let current = { rootId: "root-1", relativePath: "" };
     let selected = "";
@@ -5363,7 +6106,39 @@ function twaNewProjectPage() {
     const rootsEl = document.getElementById("roots");
     const list = document.getElementById("list");
     const open = document.getElementById("open");
+    const languageSelect = document.getElementById("language-select");
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const dictionaries = BOOTSTRAP.i18n?.dictionaries || {};
+    let locale = resolveLocale();
+    function normalizeLocale(value, fallback = "en") {
+      const text = String(value || "").trim();
+      if (!text || text.toLowerCase() === "auto") return fallback;
+      const lower = text.toLowerCase().replace("_", "-");
+      if (lower === "zh" || lower.startsWith("zh-cn") || lower.startsWith("zh-hans")) return "zh-CN";
+      if (lower.startsWith("en")) return "en";
+      return fallback;
+    }
+    function resolveLocale() {
+      const stored = normalizeLocale(localStorage.getItem("legax_locale"), "");
+      if (stored) return stored;
+      const configured = String(BOOTSTRAP.locale || "auto");
+      if (configured.toLowerCase() !== "auto") return normalizeLocale(configured, "en");
+      for (const value of navigator.languages || [navigator.language]) {
+        const normalized = normalizeLocale(value, "");
+        if (normalized) return normalized;
+      }
+      return "en";
+    }
+    function t(key) { return dictionaries[locale]?.[key] || dictionaries.en?.[key] || key; }
+    function applyI18n() {
+      document.documentElement.lang = locale;
+      languageSelect.value = locale;
+      languageSelect.setAttribute("aria-label", t("language.label"));
+      document.getElementById("title").textContent = t("twa.title");
+      document.getElementById("up").textContent = t("common.back");
+      document.getElementById("retry").textContent = t("common.retry");
+      open.textContent = t("twa.open");
+    }
     async function json(url, options = {}) {
       const response = await fetch(url, options);
       const body = await response.json().catch(() => ({}));
@@ -5381,10 +6156,10 @@ function twaNewProjectPage() {
         if (!body.ok || data.ok === false) throw new Error(data.error || body.statusText);
         return data.response;
       }
-      throw new Error("Daemon did not respond in time.");
+      throw new Error(t("twa.timeout"));
     }
     async function load(relativePath = current.relativePath) {
-      statusEl.textContent = "Loading folders...";
+      statusEl.textContent = t("twa.loading");
       const queued = await json("/api/twa/project-children", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -5408,7 +6183,7 @@ function twaNewProjectPage() {
         const empty = document.createElement("button");
         empty.type = "button";
         empty.disabled = true;
-        empty.textContent = "No child folders";
+        empty.textContent = t("twa.empty");
         list.append(empty);
       }
       open.disabled = false;
@@ -5442,7 +6217,7 @@ function twaNewProjectPage() {
     });
     open.addEventListener("click", async () => {
       try {
-        statusEl.textContent = "Opening project...";
+        statusEl.textContent = t("twa.opening");
         const queued = await json("/api/twa/open-project", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -5450,15 +6225,21 @@ function twaNewProjectPage() {
         });
         const response = await responseFor(queued.requestId);
         if (response.ok === false) throw new Error(response.error);
-        statusEl.textContent = "Project opened. You can return to Telegram.";
+        statusEl.textContent = t("twa.opened");
       } catch (error) {
         statusEl.textContent = error.message;
       }
     });
     bootstrap().catch((error) => {
-      context.textContent = "Project picker unavailable";
+      context.textContent = t("twa.unavailable");
       statusEl.textContent = error.message;
     });
+    languageSelect.addEventListener("change", () => {
+      locale = normalizeLocale(languageSelect.value, "en");
+      localStorage.setItem("legax_locale", locale);
+      applyI18n();
+    });
+    applyI18n();
   </script>
 </body>
 </html>`;
@@ -6202,7 +6983,7 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/hosts") {
-    if (!requireDesktop(req, url)) {
+    if (!requireDesktop(req, url) && !requirePhoneForSession(req, url, DEFAULT_SESSION)) {
       sendJson(res, 401, { ok: false, error: "unauthorized" });
       return;
     }
@@ -6475,6 +7256,7 @@ async function route(req, res) {
       sessionId,
       messageId: message.id,
       messageSeq: message.seq,
+      targetHostId: message.targetHostId,
       targetAgentId: message.targetAgentId,
       action: message.action ?? ""
     });
@@ -6503,10 +7285,11 @@ async function route(req, res) {
     const [sessionId, session] = getSession(store, url.searchParams.get("sessionId"));
     const after = Number(url.searchParams.get("after") ?? 0);
     const agentId = url.searchParams.get("agentId");
+    const hostId = url.searchParams.get("hostId");
     const taskId = url.searchParams.get("taskId");
     const messages = session.messages
       .filter((message) => Number(message.seq) > after)
-      .filter((message) => messageMatchesTarget(message, agentId, taskId));
+      .filter((message) => messageMatchesTarget(message, agentId, taskId, hostId));
     sendJson(res, 200, { ok: true, sessionId, messages });
     return;
   }
