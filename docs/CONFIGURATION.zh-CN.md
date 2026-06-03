@@ -60,7 +60,7 @@ Adapter 段落名是公开配置 key。新增或重命名必须同时更新 adap
 | `host` | string | 监听 host。insecure development mode 必须只绑定 loopback。 |
 | `port` | number | 监听端口。 |
 | `publicBaseUrl` | string | 手机侧流程使用的公网 HTTPS URL，例如 Telegram Mini App 项目选择。 |
-| `locale` | string | relay ??? relay ??????????????? `auto`?`en` ? `zh-CN`?`auto` ??????? localStorage ? navigator language ??? |
+| `locale` | string | relay 页面和 relay 拥有的 transport 文案使用的语言：`auto`、`en` 或 `zh-CN`。`auto` 会让浏览器按 localStorage 和 navigator language 选择。 |
 | `secret` | string | desktop-side relay secret。必须与 daemon/adapter 使用的 relay transport secret 匹配。 |
 | `storePath` | string | `legax.relay/1` store 路径。 |
 | `allowInsecureDev` | boolean | 仅限本机开发的无鉴权模式。不要用于对外暴露的 relay。 |
@@ -81,7 +81,7 @@ Adapter 段落名是公开配置 key。新增或重命名必须同时更新 adap
 | `feishu` | `appId`、`appSecret`、`receiveId`、`verificationToken` | `platform: lark` 或 `apiBaseUrl` 选择 Lark global。 |
 | `webhook` | `url` | 默认仅出站。可选 `secret` 会发送给接收服务；relay 入站 webhook 必须显式设置 `inboundEnabled: true` 和独立的 `inboundSecret`。 |
 
-Transport-local `locale` ??? relay ???????????Transport-local `notifications` ???? transport?????? daemon-wide ? adapter-level ??????
+Transport-local `locale` 可以覆盖该 transport 的 relay-owned outbound 文案。Transport-local `notifications` 只覆盖该 transport 的 daemon-wide 和 adapter-level 通知默认值。
 
 ## Adapter 段落
 
