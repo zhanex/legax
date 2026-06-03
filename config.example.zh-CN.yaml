@@ -15,6 +15,7 @@ relay:
   host: 0.0.0.0
   port: 8787
   publicBaseUrl: https://YOUR_RELAY_HOST          # Telegram Mini App 使用的公网 HTTPS 地址
+  locale: auto                                    # relay 页面与 relay 接管的通道文案：auto、en 或 zh-CN
   telegramWebAppLaunchTokenTtlMs: 300000          # TWA 短期启动令牌有效期
   secret: replace-with-a-long-random-secret    # 桌面端密钥；与 transports[type=relay].secret 必须一致
   storePath: ./data/relay-store.json

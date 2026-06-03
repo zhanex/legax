@@ -2,7 +2,6 @@
 
 English | [Simplified Chinese](CONFIGURATION.zh-CN.md)
 
-Legax uses one operator-owned YAML config file. The examples are user-facing templates, but this document is the maintainer contract for adding, parsing, and documenting config fields.
 
 ## Sources
 
@@ -61,6 +60,7 @@ Adapter section names are public config keys. Adding or renaming them requires u
 | `host` | string | Listener host. Insecure development mode must bind to loopback only. |
 | `port` | number | Listener port. |
 | `publicBaseUrl` | string | Public HTTPS URL for phone-facing flows such as Telegram Mini App project selection. |
+| `locale` | string | `auto`, `en`, or `zh-CN` for relay pages and relay-owned transport text. `auto` lets the browser choose from localStorage and navigator language. |
 | `secret` | string | Desktop-side relay secret. Must match relay transport secrets used by daemon/adapters. |
 | `storePath` | string | Path to `legax.relay/1` store. |
 | `allowInsecureDev` | boolean | Local-only unauthenticated development mode. Do not use for exposed relays. |
@@ -81,7 +81,7 @@ Every transport entry has `name`, `type`, `enabled`, and optional `timeoutMs`. T
 | `feishu` | `appId`, `appSecret`, `receiveId`, `verificationToken` | `platform: lark` or `apiBaseUrl` selects Lark global. |
 | `webhook` | `url` | Outbound by default. Optional `secret` is sent to the receiving service. Relay inbound webhooks require explicit `inboundEnabled: true` and a separate `inboundSecret`. |
 
-Transport-local `notifications` override daemon-wide and adapter-level notification defaults for that transport only.
+Transport-local `locale` can override relay-owned outbound copy for that transport. Transport-local `notifications` override daemon-wide and adapter-level notification defaults for that transport only.
 
 ## Adapter Sections
 

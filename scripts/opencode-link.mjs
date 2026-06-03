@@ -487,6 +487,7 @@ class RelayClient {
         agentLabel: settings.agentLabel,
         taskId: settings.taskId,
         mode: this.config.runtimeMode ?? settings.mode,
+        ...(process.env.LEGAX_DAEMON_HOST_ID ? { hostId: process.env.LEGAX_DAEMON_HOST_ID } : {}),
         ...selectedThreadMetadata(this.config, settings),
         ...metadata
       },

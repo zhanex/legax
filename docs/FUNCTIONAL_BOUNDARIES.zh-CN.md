@@ -2,7 +2,6 @@
 
 [English](FUNCTIONAL_BOUNDARIES.md) | 简体中文
 
-本文从业务流程角度描述 Legax：项目负责什么、不负责什么，各组件的职责边界在哪里，以及 relay 网页、Telegram 和飞书/Lark 如何把远端用户的一次操作闭环到本地 CLI Agent。
 
 ## 产品边界
 
@@ -158,13 +157,13 @@ Legax 管理 Agent CLI 的跨设备 session 路由、任务身份、远端交互
 
 闭环标准：relay 可以展示可迁移会话 id、当前 generation、lease 持有者、handoff 历史和 fork lineage，而不会把 CLI 原生 id 当作主要身份。
 
-### 4. 在 Relay 网页选择 CLI、项目和 Session
+### 4. ? Relay ???????CLI???? Session
 
 目标：每条出站消息都有明确目标。
 
-当前目标在对话上方显示为 `CLI / Project / Session`。三个区域都是可点击的纯文本分段，并打开对应范围的选择器：
+?? CLI ?????????? `CLI / Project / Session`????????????????????????????????????????????
 
-- **CLI 区域**：展示 daemon 已知的全部 CLI 适配器，包括尚未启动的适配器。选择 CLI 后设置当前 CLI，请求该适配器的 session 列表，并进入项目选择。
+- **CLI ??**???????????? CLI ????????????????? CLI ????? CLI??????????? session ???????????
 - **Project 区域**：展示当前 CLI 下已知的 project/chat。**Chats** 始终存在，作为直接对话范围；没有项目元数据的 session 归到 **Chats** 下；Claude 只有 cwd、没有显式 project 元数据的历史也会出现在 **Chats** 下，方便从手机继续普通 Claude 对话；Codex app-server session 如果没有显式 project id 或 project name，也归到 **Chats** 下；OpenCode session 在 server 返回 cwd/project path 时按项目展示，否则归到 **Chats** 下。选择 project/chat 后设置范围，并进入 session 选择。没有项目上下文时，**Load sessions** 会请求适配器列出 session。
 - **Session 区域**：展示当前 CLI 与 project 下的 session。选择后投递 `select_session`，后续文本进入该 session。已归档 session 不显示；列表每页最多 10 条，超过后显示 **Previous** / **Next** 翻页按钮。
 
@@ -185,7 +184,7 @@ Legax 管理 Agent CLI 的跨设备 session 路由、任务身份、远端交互
 2. 状态、普通消息、权限请求、用户输入请求有不同的视觉样式。
 3. 可见消息体去除重复 transport 头部，项目/session 上下文放在周围 UI 中。
 4. 用户在回复框输入文本并点击 **Send**。
-5. 浏览器调用 `POST /api/messages`，携带 `targetAgentId` 和文本。
+5. ????? `POST /api/messages`??? `targetHostId`?`targetAgentId` ????
 6. Daemon 把消息路由到已选 adapter。
 7. Adapter 把文本送入当前 CLI/session，并把新事件写回 relay。
 
@@ -201,7 +200,7 @@ Legax 管理 Agent CLI 的跨设备 session 路由、任务身份、远端交互
 4. 启用 Telegram 时，Telegram 消息展示 inline **Approve** 和 **Deny** 按钮。
 5. 启用飞书/Lark 时，飞书/Lark 显示带 **Approve** 和 **Deny** 按钮的交互卡片。
 6. 用户点击其中一个动作。
-7. Relay、Telegram 或飞书/Lark 发送 `permission_decision` 消息。
+7. Relay?Telegram ???/Lark ?? `permission_decision` ???????? host?adapter ? request id?
 8. Adapter 等待该决定，并通过 CLI 原生审批通道返回。
 
 闭环标准：CLI 通过自己的结构化回调收到明确的同意或拒绝。没有原生回调的 adapter（例如当前 OpenCode bridge）不得声称支持手机端审批。
