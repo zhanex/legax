@@ -99,6 +99,7 @@ When adding an exception, document why an external renderer, package format, or 
 
 - All documentation and commented examples must be UTF-8 without BOM.
 - Avoid editor or shell commands that silently rewrite UTF-8 as a local code page.
+- Do not use Windows PowerShell 5.1 `Set-Content` or `Out-File` for tracked docs unless the command explicitly writes UTF-8 without BOM.
 - On Windows PowerShell 5.1, prefer Node.js, a modern editor, or `.NET` `UTF8Encoding(false)` when rewriting files.
 - Run `npm run check:docs` before submitting documentation changes.
 - `npm run check:docs` includes the context-budget gate for compact agent entry docs and `Agent Summary` coverage.

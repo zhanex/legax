@@ -13,6 +13,7 @@ This is the repository instruction contract for AI coding agents working on Lega
 - Never simulate UI clicks, auto-approve native prompts, or bypass an agent's security policy.
 - Do not route remote workflow input to arbitrary shell, `eval`, script, prompt, command, or free-form executable args.
 - Keep documentation language pairs together: English `.md` with `.zh-CN.md`, and `config.example*.yaml` with matching `config.example*.zh-CN.yaml`.
+- Keep tracked documentation and commented examples UTF-8 without BOM; do not rewrite them through locale-dependent shell encodings.
 - Do not commit implementation plans, drafts, scratch notes, audit notes, or agent transcripts as tracked docs. Use ignored process directories or external task systems.
 - If you add a script or E2E file, append it to the explicit `package.json` `check:node` or `test:e2e` list.
 

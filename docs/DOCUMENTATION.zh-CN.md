@@ -99,6 +99,7 @@
 
 - 所有文档和带注释的示例文件必须使用 UTF-8 且不带 BOM。
 - 避免使用会把 UTF-8 静默改写为本地代码页的编辑器或 shell 命令。
+- 不要用 Windows PowerShell 5.1 的 `Set-Content` 或 `Out-File` 重写被跟踪文档，除非命令明确写入不带 BOM 的 UTF-8。
 - 在 Windows PowerShell 5.1 中重写文件时，优先使用 Node.js、现代编辑器，或 `.NET` 的 `UTF8Encoding(false)`。
 - 提交文档变更前运行 `npm run check:docs`。
 - `npm run check:docs` 包含上下文预算 gate，用于检查紧凑 agent 入口文档和 `Agent Summary` 覆盖。

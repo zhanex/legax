@@ -13,6 +13,7 @@
 - 不得模拟 UI 点击、自动批准原生提示，或绕过 agent 安全策略。
 - 不得把远程 workflow 输入路由到任意 shell、`eval`、脚本、prompt、command 或自由可执行参数。
 - 文档必须成对维护：英文 `.md` 对应 `.zh-CN.md`，`config.example*.yaml` 对应 `config.example*.zh-CN.yaml`。
+- 被跟踪的文档和带注释示例必须使用 UTF-8 且不带 BOM；不要通过依赖本地代码页的 shell 编码重写它们。
 - 不要把实现计划、草稿、临时说明、审计笔记或 agent 执行记录提交为跟踪文档。
 - 新增脚本或 E2E 文件时，必须加入 `package.json` 的显式 `check:node` 或 `test:e2e` 列表。
 
