@@ -1,11 +1,11 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const errors = [];
 
-const byteBudgets = new Map([
+const ENTRY_DOC_BYTE_BUDGETS = new Map([
   ["AGENTS.md", 4096],
   ["AGENTS.zh-CN.md", 4096],
   ["docs/context_for_llms.md", 3072],
@@ -14,7 +14,9 @@ const byteBudgets = new Map([
   ["docs/README.zh-CN.md", 6144]
 ]);
 
-const summaryDocs = [
+const AGENT_SUMMARY_MAX_CHARS = 900;
+
+const agentSummaryDocs = [
   "docs/ARCHITECTURE.md",
   "docs/ARCHITECTURE.zh-CN.md",
   "docs/FUNCTIONAL_BOUNDARIES.md",
@@ -39,12 +41,16 @@ function rel(filePath) {
   return path.relative(root, filePath).replaceAll(path.sep, "/");
 }
 
+function abs(relPath) {
+  return path.join(root, relPath);
+}
+
 function exists(relPath) {
-  return fs.existsSync(path.join(root, relPath));
+  return fs.existsSync(abs(relPath));
 }
 
 function read(relPath) {
-  return fs.readFileSync(path.join(root, relPath), "utf8");
+  return fs.readFileSync(abs(relPath), "utf8");
 }
 
 function trackedAndVisibleFiles() {
@@ -56,34 +62,41 @@ function trackedAndVisibleFiles() {
   return result.stdout.toString("utf8").split("\0").filter(Boolean);
 }
 
-function summaryBody(text) {
+function agentSummaryBody(text) {
   const match = text.match(/^## Agent Summary\s*\n([\s\S]*?)(?=\n## |\n# |$)/m);
   return match ? match[1].trim() : "";
 }
 
-for (const [relPath, maxBytes] of byteBudgets) {
+function withoutLanguageSwitch(text) {
+  return text
+    .split("\n")
+    .filter((line) => !/Simplified Chinese|English \|/.test(line))
+    .join("\n");
+}
+
+for (const [relPath, maxBytes] of ENTRY_DOC_BYTE_BUDGETS) {
   if (!exists(relPath)) {
     errors.push(`${relPath} is missing`);
     continue;
   }
-  const bytes = fs.statSync(path.join(root, relPath)).size;
+  const bytes = fs.statSync(abs(relPath)).size;
   if (bytes > maxBytes) {
     errors.push(`${relPath} is ${bytes} bytes, over the ${maxBytes} byte agent-context budget`);
   }
 }
 
-for (const relPath of summaryDocs) {
+for (const relPath of agentSummaryDocs) {
   if (!exists(relPath)) {
     errors.push(`${relPath} is missing`);
     continue;
   }
-  const body = summaryBody(read(relPath));
+  const body = agentSummaryBody(read(relPath));
   if (!body) {
     errors.push(`${relPath} is missing a ## Agent Summary section`);
     continue;
   }
-  if (body.length > 900) {
-    errors.push(`${relPath} Agent Summary is ${body.length} characters, over the 900 character budget`);
+  if (body.length > AGENT_SUMMARY_MAX_CHARS) {
+    errors.push(`${relPath} Agent Summary is ${body.length} characters, over the ${AGENT_SUMMARY_MAX_CHARS} character budget`);
   }
 }
 
@@ -99,11 +112,7 @@ if (exists("docs/context_for_llms.md")) {
   if (!/^## Read Budget/m.test(context)) {
     errors.push("docs/context_for_llms.md must include a ## Read Budget section");
   }
-  const withoutLanguageSwitch = context
-    .split("\n")
-    .filter((line) => !/Simplified Chinese|English \|/.test(line))
-    .join("\n");
-  if (/\.zh-CN\.md\b/.test(withoutLanguageSwitch)) {
+  if (/\.zh-CN\.md\b/.test(withoutLanguageSwitch(context))) {
     errors.push("docs/context_for_llms.md must not route default agent work to .zh-CN.md files");
   }
 }
@@ -114,7 +123,7 @@ const visibleDocs = trackedAndVisibleFiles()
 
 const largest = visibleDocs
   .map((file) => {
-    const filePath = path.join(root, file);
+    const filePath = abs(file);
     return { file, bytes: fs.existsSync(filePath) ? fs.statSync(filePath).size : 0 };
   })
   .sort((left, right) => right.bytes - left.bytes)
@@ -132,5 +141,5 @@ if (errors.length > 0) {
 
 console.log(`Documentation context budget checks passed (${visibleDocs.length} visible docs/config files).`);
 for (const item of largest.slice(0, 5)) {
-  console.log(`- ${rel(path.join(root, item.file))}: ${item.bytes} bytes`);
+  console.log(`- ${rel(abs(item.file))}: ${item.bytes} bytes`);
 }
